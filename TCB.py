@@ -1,0 +1,25 @@
+import ast
+
+class TCB:
+  def __init__(self, task_line):
+    self.id = int(task_line[0].strip())
+    self.color = task_line[1].strip()
+    self.arrival = int(task_line[2].strip())
+    self.duration = int(task_line[3].strip())
+    self.period = int(task_line[4].strip())
+    self.deadline = int(task_line[5].strip())
+    
+    # Parse the events if the 7th parameter exists, otherwise default to an empty list
+    if len(task_line) > 6 and task_line[6].strip():
+        self.events = ast.literal_eval(task_line[6].strip())
+    else:
+        self.events = []
+
+  def print(self):
+    print(f"Task ID {self.id}:")
+    print(f"  - Color: {self.color}")
+    print(f"  - Arrival: {self.arrival}")
+    print(f"  - Duration: {self.duration}")
+    print(f"  - Period: {self.period}")
+    print(f"  - Deadline: {self.deadline}")
+    print(f"  - Events: {self.events}\n")
