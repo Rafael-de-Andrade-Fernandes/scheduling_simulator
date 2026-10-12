@@ -1,18 +1,19 @@
 import os
 import TCB
-from extract_config import read_config_file
+import extract_config
 
-# test_content = """RM; 1; 1;
-# 1; FFF000; 0; 5; 20; 10;
-# 2; 00FF00; 2; 10; 1; 1;  ['event1', 'event'];
+PATH_FILE = 'config_test.txt'
 
-# """
 
-# with open('config_test.txt', 'w', encoding='utf-8') as f:
-#     f.write(test_content)
+algorithm, quantum, num_cpus = extract_config.extract_system_parameters(PATH_FILE)
 
-read_config_file('config_test.txt')
+task_list = extract_config.extract_task_list(PATH_FILE)
 
-pegar config sistema
+print(f"algorithm {algorithm}")
+print(f"quantum {quantum}")
+print(f"num_cpus {num_cpus}")
 
-pegar lista TCB
+for task in task_list:
+    task.print()
+
+    
