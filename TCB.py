@@ -10,8 +10,11 @@ class TCB:
     self.deadline = int(task_line[5].strip())
     self.computational_time = 0
     self.times_executed = 0
+    self.end_period = self.arrival + self.period
     self.is_running = False
     self.is_suspended = False
+    self.period_completed = False
+    self.delay_counter = 0
     
     # Parse the events if the 7th parameter exists, otherwise default to an empty list
     if len(task_line) > 6 and task_line[6].strip():
@@ -30,4 +33,6 @@ class TCB:
     print(f"  - Is Running: {self.is_running}")
     print(f"  - Computational Time: {self.computational_time}")
     print(f"  - Times Executed: {self.times_executed}")
-    print(f"  - Is Suspended: {self.is_suspended}\n")
+    print(f"  - Is Suspended: {self.is_suspended}")
+    print(f"  - End Period: {self.end_period}")
+    print(f"  - Period Completed: {self.period_completed}\n")
