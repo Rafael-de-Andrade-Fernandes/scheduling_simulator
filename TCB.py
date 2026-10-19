@@ -14,7 +14,6 @@ class TCB:
     self.is_running = False
     self.is_suspended = False
     self.period_completed = False
-    self.delay_counter = 0
     self.is_late = False
     
     # Parse the events if the 7th parameter exists, otherwise default to an empty list
