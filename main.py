@@ -26,9 +26,15 @@ for task in task_list:
 tasks_to_arrival = task_list
 ready_queue = []
 # running_tasks = []
-suspended_tasks = []
+# suspended_tasks = []
 terminated_tasks = []
 
+def create_next_instance(task):
+    new_instance = task
+    new_instance.arrival = task.end_period
+    new_instance.computational_time = 0
+    new_instance.end_period = new_instance.arrival + new_instance.period  # Update end_period for the new instance
+    return new_instance
 
 while len(terminated_tasks) != len(task_list):
 
@@ -51,18 +57,18 @@ while len(terminated_tasks) != len(task_list):
     # return of suspended tasks to ready queue if their period has elapsed
 
     #=========
-    still_suspended = []
+    # still_suspended = []
 
-    for task in suspended_tasks:
-        if task.end_period == TICKS:
-            task.period_completed = False  # Reset for the next period
-            task.end_period += task.period  # Update end_period for the next cycle
-            ready_queue.append(task)
-            print(f"Task {task.id} has returned from suspended state at tick {TICKS}.")
-        else:
-            still_suspended.append(task)
+    # for task in suspended_tasks:
+    #     if task.end_period == TICKS:
+    #         task.period_completed = False  # Reset for the next period
+    #         task.end_period += task.period  # Update end_period for the next cycle
+    #         ready_queue.append(task)
+    #         print(f"Task {task.id} has returned from suspended state at tick {TICKS}.")
+    #     else:
+    #         still_suspended.append(task)
 
-    suspended_tasks = still_suspended
+    # suspended_tasks = still_suspended
     #========
 
     # timeout verify
@@ -94,9 +100,13 @@ while len(terminated_tasks) != len(task_list):
         task_chosen.is_running = False
         ready_queue.remove(task_chosen)
         task_chosen.times_executed += 1
-        # if task_chosen.times_executed == SIMULATION_LIMIT:
-        #     terminated_tasks.append(task_chosen)
-        #     print(f"Task {task_chosen.id} has executed {SIMULATION_LIMIT} times and has reached the simulation limit.")
+        if task_chosen.times_executed == SIMULATION_LIMIT:
+            terminated_tasks.append(task_chosen)
+            print(f"Task {task_chosen.id} has executed {SIMULATION_LIMIT} times and has reached the simulation limit.")
+        else
+            new_instance = create_next_instance(task)
+            ready_queue.append(new_instance)
+            
         # elif task_chosen.delay_counter > 0:
         #     print(f"Task {task_chosen.id} has completed its execution at tick {TICKS + 1}, but it was delayed by {task_chosen.delay_counter} period(s).")
         #     task_chosen.delay_counter -= 1
