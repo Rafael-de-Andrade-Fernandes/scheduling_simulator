@@ -15,6 +15,7 @@ class TCB:
     self.is_suspended = False
     self.period_completed = False
     self.delay_counter = 0
+    self.is_late = False
     
     # Parse the events if the 7th parameter exists, otherwise default to an empty list
     if len(task_line) > 6 and task_line[6].strip():
@@ -35,4 +36,5 @@ class TCB:
     print(f"  - Times Executed: {self.times_executed}")
     print(f"  - Is Suspended: {self.is_suspended}")
     print(f"  - End Period: {self.end_period}")
+    print(f"  - Is Late: {self.is_late}")
     print(f"  - Period Completed: {self.period_completed}\n")
