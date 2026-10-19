@@ -69,8 +69,12 @@ while len(terminated_tasks) != len(task_list):
     for task in ready_queue:
         if task.end_period == TICKS:
             print(f"SCHEADULING ERROR: Task {task.id} has not completed its execution within its period at tick {TICKS}.")
-            task.end_period += task.period  # Update end_period for the next cycle
-            task.delay_counter += 1
+            new_instance = task
+            new_instance.computational_time = 0
+            new_instance.arrival = task.end_period
+            new_instance.end_period = new_instance.arrival + new_instance.period  # Update end_period for the new instance
+            ready_queue.append(new_instance)
+            task.is_late = True
 
     task_chosen = choose_task.choose_task(ready_queue, algorithm)
 
@@ -90,16 +94,16 @@ while len(terminated_tasks) != len(task_list):
         task_chosen.is_running = False
         ready_queue.remove(task_chosen)
         task_chosen.times_executed += 1
-        if task_chosen.times_executed == SIMULATION_LIMIT:
-            terminated_tasks.append(task_chosen)
-            print(f"Task {task_chosen.id} has executed {SIMULATION_LIMIT} times and has reached the simulation limit.")
-        elif task_chosen.delay_counter > 0:
-            print(f"Task {task_chosen.id} has completed its execution at tick {TICKS + 1}, but it was delayed by {task_chosen.delay_counter} period(s).")
-            task_chosen.delay_counter -= 1
-            ready_queue.append(task_chosen)
-        else:
-            suspended_tasks.append(task_chosen)
-            print(f"Task {task_chosen.id} has finished executing in this period({task_chosen.times_executed}). Is now suspended until the next period.")
+        # if task_chosen.times_executed == SIMULATION_LIMIT:
+        #     terminated_tasks.append(task_chosen)
+        #     print(f"Task {task_chosen.id} has executed {SIMULATION_LIMIT} times and has reached the simulation limit.")
+        # elif task_chosen.delay_counter > 0:
+        #     print(f"Task {task_chosen.id} has completed its execution at tick {TICKS + 1}, but it was delayed by {task_chosen.delay_counter} period(s).")
+        #     task_chosen.delay_counter -= 1
+        #     ready_queue.append(task_chosen)
+        # else:
+        #     suspended_tasks.append(task_chosen)
+        #     print(f"Task {task_chosen.id} has finished executing in this period({task_chosen.times_executed}). Is now suspended until the next period.")
 
     TICKS += 1
 
