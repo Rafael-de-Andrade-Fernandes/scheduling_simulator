@@ -89,9 +89,6 @@ while len(terminated_tasks) != len(task_list):
     task_chosen.computational_time += 1
 
     if task_chosen.computational_time == task_chosen.duration:
-
-        task_chosen.period_completed = True
-        task_chosen.computational_time = 0
         task_chosen.is_running = False
         ready_queue.remove(task_chosen)
         task_chosen.times_executed += 1
