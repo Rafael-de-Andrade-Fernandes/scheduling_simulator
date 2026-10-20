@@ -91,12 +91,11 @@ while len(terminated_tasks) != len(task_list):
     if task_chosen.computational_time == task_chosen.duration:
         task_chosen.is_running = False
         ready_queue.remove(task_chosen)
-        task_chosen.times_executed += 1
-        if task_chosen.times_executed == SIMULATION_LIMIT:
+        if task_chosen.instance_number == SIMULATION_LIMIT:
             terminated_tasks.append(task_chosen)
             print(f"Task {task_chosen.id} has executed {SIMULATION_LIMIT} times and has reached the simulation limit.")
         else
-            new_instance = create_next_instance(task)
+            new_instance = create_next_instance_of(task)
             ready_queue.append(new_instance)
             
         # elif task_chosen.delay_counter > 0:
