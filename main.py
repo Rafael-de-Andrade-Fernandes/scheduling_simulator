@@ -75,11 +75,6 @@ while len(terminated_tasks) != len(task_list):
     for task in ready_queue:
         if task.end_period == TICKS:
             print(f"SCHEADULING ERROR: Task {task.id} has not completed its execution within its period at tick {TICKS}.")
-            new_instance = task
-            new_instance.computational_time = 0
-            new_instance.arrival = task.end_period
-            new_instance.end_period = new_instance.arrival + new_instance.period  # Update end_period for the new instance
-            ready_queue.append(new_instance)
             task.is_late = True
 
     task_chosen = choose_task.choose_task(ready_queue, algorithm)
