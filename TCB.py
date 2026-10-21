@@ -1,4 +1,5 @@
 import ast
+import copy
 
 class TCB:
   def __init__(self, task_line):
@@ -11,7 +12,9 @@ class TCB:
     self.computational_time = 0
     self.instance_number = 1
     self.end_period = self.arrival + self.period
+    self.absolute_deadline = self.arrival + self.deadline
     self.is_running = False
+    self.is_late = False
     
     # Parse the events if the 7th parameter exists, otherwise default to an empty list
     if len(task_line) > 6 and task_line[6].strip():
@@ -19,14 +22,15 @@ class TCB:
     else:
         self.events = []
 
-
-  def create_new_instance_of(task)
-    new_instance = task
-    new_instance.computational_time = 0
-    new_instance.instance_number += 1
-    new_instance.arrival = task.end_period
-    new_instance.end_period = new_instance.arrival + new_instance.end_period
-    
+  def create_next_instance(self):
+    next_instance = copy.deepcopy(self)
+    next_instance.is_late = False
+    next_instance.computational_time = 0
+    next_instance.instance_number += 1
+    next_instance.arrival = self.end_period
+    next_instance.absolute_deadline = next_instance.arrival + next_instance.deadline
+    next_instance.end_period = next_instance.arrival + next_instance.period
+    return next_instance
 
   def print(self):
     print(f"Task ID {self.id}:")
@@ -40,4 +44,6 @@ class TCB:
     print(f"  - Computational Time: {self.computational_time}")
     print(f"  - Instance Number: {self.instance_number}")
     print(f"  - End Period: {self.end_period}")
+    print(f"  - Absolute Deadline: {self.absolute_deadline}")
+    print(f"  - Is Late: {self.is_late}")
  
