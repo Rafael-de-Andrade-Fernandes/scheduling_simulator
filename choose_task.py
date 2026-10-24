@@ -5,22 +5,22 @@ def sort(object1, object2):
     return random.choice([object1, object2])
 
 
-def choose_task(ready_queue, algorithm):
-    if not ready_queue:
+def choose_task(tasks, algorithm):
+    if not tasks:
         return None
     
-    task_chosen = ready_queue[0]
+    task_chosen = tasks[0]
 
     if algorithm == 'RM':
-        for task in ready_queue:
+        for task in tasks:
             if task.period < task_chosen.period:
                 task_chosen = task
                 # print(f"Task {task.id} chosen to run based on a shorter period.")
             elif task.period == task_chosen.period:
-                if task.is_running and not task_chosen.is_running:
+                if task.processor and not task_chosen.processor:
                     task_chosen = task
                     # print(f"Task {task.id} chosen to run because it is running.")
-                elif task.is_running == task_chosen.is_running:
+                elif (task.processor and task_chosen.processor) or (not task.processor and not task_chosen.processor):
                     if task.deadline < task_chosen.deadline:
                         task_chosen = task
                         # print(f"Task {task.id} chosen to run based on a shorter deadline.")

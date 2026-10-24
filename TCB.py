@@ -9,11 +9,11 @@ class TCB:
     self.duration = int(task_line[3].strip())
     self.period = int(task_line[4].strip())
     self.deadline = int(task_line[5].strip())
-    self.computational_time = 0
+    self.computational_time = 0 # quantum
     self.instance_number = 1
     self.end_period = self.arrival + self.period
     self.absolute_deadline = self.arrival + self.deadline
-    self.is_running = False
+    self.processor = None
     self.is_late = False
     
     # Parse the events if the 7th parameter exists, otherwise default to an empty list
@@ -40,7 +40,6 @@ class TCB:
     print(f"  - Period: {self.period}")
     print(f"  - Deadline: {self.deadline}")
     print(f"  - Events: {self.events}")
-    print(f"  - Is Running: {self.is_running}")
     print(f"  - Computational Time: {self.computational_time}")
     print(f"  - Instance Number: {self.instance_number}")
     print(f"  - End Period: {self.end_period}")
