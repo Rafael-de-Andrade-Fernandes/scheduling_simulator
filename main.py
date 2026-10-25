@@ -1,15 +1,18 @@
 import os
 import TCB
-import extract_config
-import choose_task
+import processor
+from utils import initialize_processors, pair_cpus_tasks
+from extract_config import extract_system_parameters, extract_task_list
+from choose_task import choose_task
 
-PATH_FILE = 'config_test.txt'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PATH_FILE = os.path.join(BASE_DIR, 'config_test.txt')
 
 # GET SYSTEM PARAMETERS AND TASK LIST FROM CONFIG FILE
 
-algorithm, quantum, num_cpus = extract_config.extract_system_parameters(PATH_FILE)
+algorithm, quantum, num_cpus = extract_system_parameters(PATH_FILE)
 
-task_list = extract_config.extract_task_list(PATH_FILE)
+task_list = extract_task_list(PATH_FILE)
 
 print(f"algorithm {algorithm}")
 print(f"quantum {quantum}")
@@ -28,8 +31,11 @@ SIMULATION_LIMIT = 3
 
 tasks_to_arrival = task_list
 ready_queue = []
-# running_tasks = [] IMPLEMENTAR PARA MAIS PROCESSADORES
+running_tasks = []
+evaluate_tasks = []
 terminated_tasks = []
+
+processors_list = initialize_processors(num_cpus)
 
 # MAIN SCHEDULING SIMULATION LOOP
 
@@ -59,29 +65,44 @@ while len(terminated_tasks) != len(task_list):
 
     tasks_to_arrival = still_to_arrival
 
+    # choose the num_cpus most prioritized tasks:
+    evaluate_tasks = ready_queue + running_tasks
+    running_tasks = []
+    ready_queue =[]
+    for i in range(num_cpus):
+        task_chosen = choose_task(evaluate_tasks, algorithm)
+        if task_chosen:
+            evaluate_tasks.remove(task_chosen)
+            running_tasks.append(task_chosen)
 
-    task_chosen = choose_task.choose_task(ready_queue, algorithm)
+    # no chosen tasks go back to to ready_queue:
+    ready_queue = evaluate_tasks
+    evaluate_tasks = []
 
-    if not task_chosen:
-        TICKS += 1
-        print(f"No task is running at tick {TICKS} -> {TICKS + 1}. Processor is idle.")
-        continue
+    # colocar as running_tasks nos processadores corretos:
+    running_tasks, processors_list = pair_cpus_tasks(running_tasks, processors_list)
 
-    print(f"Task {task_chosen.id}({task_chosen.instance_number}) is running at tick {TICKS} -> {TICKS + 1}.")
-    task_chosen.is_running = True
-    task_chosen.computational_time += 1
+    for cpu in processors_list:
+        if cpu.task_running == None:
+            print(f"Processor: {cpu.id}: No task is running at tick {TICKS} -> {TICKS + 1}.")
+            continue
 
-    if task_chosen.computational_time == task_chosen.duration:
-        task_chosen.is_running = False
-        ready_queue.remove(task_chosen)
-        if task_chosen.instance_number == SIMULATION_LIMIT:
-            terminated_tasks.append(task_chosen)
-            print(f"Task {task_chosen.id}({task_chosen.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {TICKS} -> {TICKS + 1}.")
-        elif task_chosen.is_late == False:
-            new_instance = task_chosen.create_next_instance()
-            tasks_to_arrival.append(new_instance)
-            print(f"Task {task_chosen.id}({task_chosen.instance_number}) completed his computation_time at tick {TICKS} -> {TICKS + 1}. Enqueuing new instance to arrive at tick {new_instance.arrival}.")
-            
+        task_chosen = cpu.task_running
+        print(f"Processor {cpu.id}: Task {task_chosen.id}({task_chosen.instance_number}) is running at tick {TICKS} -> {TICKS + 1}.")
+        task_chosen.computational_time += 1
+
+        if task_chosen.computational_time == task_chosen.duration:
+            task_chosen.processor = None
+            cpu.task_running = None
+            running_tasks.remove(task_chosen)
+            if task_chosen.instance_number == SIMULATION_LIMIT:
+                terminated_tasks.append(task_chosen)
+                print(f"Task {task_chosen.id}({task_chosen.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {TICKS} -> {TICKS + 1}.")
+            elif task_chosen.is_late == False:
+                new_instance = task_chosen.create_next_instance()
+                tasks_to_arrival.append(new_instance)
+                print(f"Task {task_chosen.id}({task_chosen.instance_number}) completed his computation_time at tick {TICKS} -> {TICKS + 1}. Enqueuing new instance to arrive at tick {new_instance.arrival}.")
+                 
     TICKS += 1
 
 print(f"End of simulation at tick {TICKS}. All tasks have reached the simulation limit of {SIMULATION_LIMIT} executions.")
