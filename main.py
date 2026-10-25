@@ -1,41 +1,18 @@
 import os
 import TCB
-import extract_config
-import choose_task
 import processor
+from utils import initialize_processors, pair_cpus_tasks
+from extract_config import extract_system_parameters, extract_task_list
+from choose_task import choose_task
 
-
-def initialize_processors(num_cpus):
-    processors_list = []
-    for i in range(num_cpus):
-        cpu = processor.processor(i+1)
-        processors_list.append(cpu)
-    return processors_list
-
-def pair_cpus_tasks(running_tasks, processors_list):
-    for task in running_tasks:
-        first_cpu = None
-        paired = False
-        for cpu in reversed(processors_list):
-            if cpu.task_running == task:
-                paired = True
-                break
-            else:
-                first_cpu = cpu
-        if  paired == False:
-            first_cpu.task_running = task
-            task.processor = first_cpu
-
-    return running_tasks, processors_list
-
-
-PATH_FILE = 'config_test.txt'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PATH_FILE = os.path.join(BASE_DIR, 'config_test.txt')
 
 # GET SYSTEM PARAMETERS AND TASK LIST FROM CONFIG FILE
 
-algorithm, quantum, num_cpus = extract_config.extract_system_parameters(PATH_FILE)
+algorithm, quantum, num_cpus = extract_system_parameters(PATH_FILE)
 
-task_list = extract_config.extract_task_list(PATH_FILE)
+task_list = extract_task_list(PATH_FILE)
 
 print(f"algorithm {algorithm}")
 print(f"quantum {quantum}")
@@ -90,12 +67,17 @@ while len(terminated_tasks) != len(task_list):
 
     # choose the num_cpus most prioritized tasks:
     evaluate_tasks = ready_queue + running_tasks
+    running_tasks = []
+    ready_queue =[]
     for i in range(num_cpus):
-        task_chosen = choose_task.choose_task(evaluate_tasks, algorithm)
-        if task_chosen and task_chosen in ready_queue:
+        task_chosen = choose_task(evaluate_tasks, algorithm)
+        if task_chosen:
             evaluate_tasks.remove(task_chosen)
-            ready_queue.remove(task_chosen)
             running_tasks.append(task_chosen)
+
+    # no chosen tasks go back to to ready_queue:
+    ready_queue = evaluate_tasks
+    evaluate_tasks = []
 
     # colocar as running_tasks nos processadores corretos:
     running_tasks, processors_list = pair_cpus_tasks(running_tasks, processors_list)
@@ -106,12 +88,10 @@ while len(terminated_tasks) != len(task_list):
             continue
 
         task_chosen = cpu.task_running
-        print(f"Processor: {cpu.id}: Task {task_chosen.id}({task_chosen.instance_number}) is running at tick {TICKS} -> {TICKS + 1}.")
-        task_chosen.is_running = True
+        print(f"Processor {cpu.id}: Task {task_chosen.id}({task_chosen.instance_number}) is running at tick {TICKS} -> {TICKS + 1}.")
         task_chosen.computational_time += 1
 
         if task_chosen.computational_time == task_chosen.duration:
-            task_chosen.is_running = False
             task_chosen.processor = None
             cpu.task_running = None
             running_tasks.remove(task_chosen)
