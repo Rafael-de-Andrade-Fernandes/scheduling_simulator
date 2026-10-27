@@ -69,9 +69,6 @@ def extract_task_list(file_path):
         task_line = valid_lines[i].rstrip(';').split(';')
         if task_is_valid(task_line, i):
             task = TCB.TCB(task_line)
-            if task.period < 0:
-                print(f"Error: Line {i+1} has a negative period. Task ID {task.id}.")
-                exit(1)
             if task.period == 0:
                 print(f"Warning: Line {i+1} ignored. Task ID {task.id} is aperiodic (period=0) and not supported yet.")
                 continue
