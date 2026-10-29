@@ -20,7 +20,7 @@ def get_valid_lines(file_path):
     
     except Exception as e:
         print(f"Error reading the file: {e}")
-
+        exit(1)
 
 def extract_system_parameters(file_path):
 
@@ -33,6 +33,10 @@ def extract_system_parameters(file_path):
         exit(1)
         
     algorithm = system_line[0].strip().upper() 
+    if algorithm not in ("RM", "EDF"):
+        print(f"Error: Unsupported scheduling algorithm '{algorithm}'. Must be 'RM' or 'EDF'.")
+        exit(1)
+
     quantum_str = system_line[1].strip()
     num_cpus_str = system_line[2].strip()
     
@@ -63,11 +67,12 @@ def extract_task_list(file_path):
     valid_lines = get_valid_lines(file_path)    
 
     task_list = []
+    seen_ids = set()
 
     print("=== TASK LIST ===")
     for i in range(1, len(valid_lines)):
         task_line = valid_lines[i].rstrip(';').split(';')
-        if task_is_valid(task_line, i):
+        if task_is_valid(task_line, i, seen_ids):
             task = TCB.TCB(task_line)
             if task.period == 0:
                 print(f"Warning: Line {i+1} ignored. Task ID {task.id} is aperiodic (period=0) and not supported yet.")
@@ -77,5 +82,10 @@ def extract_task_list(file_path):
         else:
             print(f"Error: Invalid parameters in line {i+1}.")
             exit(1)
+
+    # Sem tarefas periódicas não há o que simular (as aperiódicas foram ignoradas)
+    if len(task_list) == 0:
+        print("Error: No periodic tasks to simulate. Aperiodic tasks (period=0) are not supported yet.")
+        exit(1)
 
     return task_list
