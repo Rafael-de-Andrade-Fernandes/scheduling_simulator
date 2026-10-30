@@ -1,6 +1,8 @@
 import os
 import TCB
 import processor
+import simulation_state
+from read_inputs import ler_setinha
 from utils import initialize_processors, pair_cpus_tasks
 from extract_config import extract_system_parameters, extract_task_list
 from choose_task import choose_task
@@ -35,13 +37,48 @@ ready_queue = []
 running_tasks = []
 terminated_tasks = []
 
+state_list = []
+
 processors_list = initialize_processors(num_cpus)
+
+current_state = simulation_state.set_state(processors_list, tasks_to_arrival, ready_queue, running_tasks, terminated_tasks)
+state_list.append(current_state)
 
 # MAIN SCHEDULING SIMULATION LOOP
 
-while len(terminated_tasks) != len(task_list):
+while len(current_state.terminated_tasks) != len(current_state.task_list):
 
     print(f"==================== TICK: {TICKS} ===================")
+
+    # VISUALIZATION AND CONTROL AREA:
+    acao = ler_setinha()
+    
+    if acao == 'DIREITA':
+            TICKS += 1
+            current_state = scale(current_state, TICKS)
+            state_list.append(current_state)
+            draw(current_state)
+    elif acao == 'ESQUERDA':
+        if TICKS > 0:
+            TICKS -= 1 
+            state_list.pop()
+            draw(state_list[-1])
+    elif acao == 'ESC':
+        print("Program abort!\n")
+        break
+
+print(f"End of simulation at tick {TICKS}. All tasks have reached the simulation limit of {SIMULATION_LIMIT} executions.")
+exit(0)
+
+def scale(current_state, TICKS):
+
+    tasks_to_arrival = current_state.tasks_to_arrival
+    ready_queue = current_state.ready_queue
+    running_tasks = current_state.running_tasks
+    terminated_tasks = current_state.terminated_tasks
+
+    processors_list = current_state.processors_list
+
 
     # timeout verify
     active_tasks = ready_queue + running_tasks
@@ -107,7 +144,7 @@ while len(terminated_tasks) != len(task_list):
                 tasks_to_arrival.append(new_instance)
                 print(f"Task {task.id}({task.instance_number}) completed his computation_time at tick {TICKS} -> {TICKS + 1}. Enqueuing new instance to arrive at tick {new_instance.arrival}.")
                  
-    TICKS += 1
+    current_state = simulation_state.set_state(processors_list, tasks_to_arrival, ready_queue, running_tasks, terminated_tasks)
+    return current_state
 
-print(f"End of simulation at tick {TICKS}. All tasks have reached the simulation limit of {SIMULATION_LIMIT} executions.")
-exit(0)
+
