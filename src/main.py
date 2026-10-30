@@ -33,7 +33,6 @@ SIMULATION_LIMIT = 3
 tasks_to_arrival = list(task_list)
 ready_queue = []
 running_tasks = []
-evaluate_tasks = []
 terminated_tasks = []
 
 processors_list = initialize_processors(num_cpus)
