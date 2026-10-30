@@ -1,7 +1,15 @@
 import random
 
+# Sorteios feitos na rodada atual: lista de pares (vencedora, perdedora).
+# É como um vetor global em C: o simulador esvazia a lista a cada tick
+# e depois a consulta para mostrar o evento "sorteio" no gráfico de Gantt.
+draws = []
+
 def sort_tie(t1, t2):
-    return random.choice([t1, t2])
+    winner = random.choice([t1, t2])
+    loser = t2 if winner is t1 else t1
+    draws.append((winner, loser))
+    return winner
 
 # Desempate
 def break_tie(t1, t2):
