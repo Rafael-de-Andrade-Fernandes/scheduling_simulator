@@ -1,8 +1,10 @@
+"""Validação segura de campos do arquivo e unicidade das definições."""
 import ast
 import re
 
 
 def validate_events_field(events_str, line_idx):
+    """Valida uma lista de textos por literal seguro, sem executar seus conteúdos."""
     if not events_str:
         return True
 
@@ -25,11 +27,12 @@ def validate_events_field(events_str, line_idx):
     return True
 
 
-def task_is_valid(task_line, i, seen_ids=None):
+def task_is_valid(task_line, i, seen_ids=None, seen_colors=None):
+    """Verifica campos, identificadores e cores antes de aceitar uma definição."""
     line_idx = i + 1
 
     # 1. Checagem de quantidade de colunas
-    if len(task_line) not in (6, 7): # siquiseven
+    if len(task_line) not in (6, 7):
         print(f"Warning: Line {line_idx} doesn't have the correct number of parameters. Invalid format.")
         return False
 
@@ -66,6 +69,14 @@ def task_is_valid(task_line, i, seen_ids=None):
     if not re.match(r'^[0-9a-fA-F]{6}$', t_color):
         print(f"Warning: Line {line_idx} ignored. Color '{t_color}' is not a valid hex format.")
         return False
+
+    # Aperiódicas serão ignoradas: não reservam uma cor das tarefas simuladas.
+    if seen_colors is not None and t_period > 0:
+        normalized_color = t_color.upper()
+        if normalized_color in seen_colors:
+            print(f"Error: Line {line_idx}: color {normalized_color} is already used by another task.")
+            return False
+        seen_colors.add(normalized_color)
 
     # 4. Validação do campo opcional de eventos (se fornecido)
     if len(fields) == 7:
