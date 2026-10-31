@@ -7,10 +7,10 @@ def make_report(result):
     lines.append("")
 
     lines.append("Processadores desligados (OFF):")
-    for cpu in range(result.num_cpus):
+    for cpu in range(result.max_cpus):
         periods = find_off_periods(result, cpu)
         if len(periods) == 0:
-            lines.append(f"  CPU {cpu + 1}: nunca ficou desligado")
+            lines.append(f"  CPU {cpu + 1}: sem intervalos OFF registrados")
         else:
             text = ""
             for period in periods:
@@ -39,9 +39,10 @@ def find_off_periods(result, cpu):
     periods = []
     tick = 0
     while tick < result.total_ticks:
-        if result.timeline[tick][cpu] is None:
+        if cpu < len(result.timeline[tick]) and result.timeline[tick][cpu] is None:
             start = tick
-            while tick < result.total_ticks and result.timeline[tick][cpu] is None:
+            while (tick < result.total_ticks and cpu < len(result.timeline[tick])
+                   and result.timeline[tick][cpu] is None):
                 tick = tick + 1
             periods.append((start, tick))
         else:
@@ -68,8 +69,7 @@ def make_task_status(result, task_id):
     executed_ticks = 0
     cpus_used = []
     for tick in range(result.total_ticks):
-        for cpu in range(result.num_cpus):
-            running = result.timeline[tick][cpu]
+        for cpu, running in enumerate(result.timeline[tick]):
             if running is not None and running[0] == task_id:
                 executed_ticks += 1
                 if (cpu + 1) not in cpus_used:
