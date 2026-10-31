@@ -31,6 +31,7 @@ class SimulatorWindow:
         # Resultado da última simulação e tarefa selecionada (0 = nenhuma)
         self.result = None
         self.selected_task_id = 0
+        self.task_state_dirty = False
         # O foco em um campo pausa a execução para não sobrescrever a digitação.
         self.entries = {}
 
@@ -132,8 +133,8 @@ class SimulatorWindow:
         self.apply_task_button = tkinter.Button(footer, text="Aplicar alterações", command=self.on_apply_task,
                                                 state="disabled")
         self.apply_task_button.pack(side="top", pady=(8, 4))
-        self.edit_hint = tkinter.Label(footer, text="Instância mais antiga não concluída. "
-                                       "Características valem para instâncias não concluídas e futuras.",
+        self.edit_hint = tkinter.Label(footer, text="Consulta: instância mais antiga não concluída. "
+                                       "Edições valem para todas as instâncias ativas e futuras.",
                                        wraplength=290, justify="left", font=("Helvetica", 9))
         self.edit_hint.pack(side="top", padx=8, pady=(0, 6))
 
@@ -172,7 +173,7 @@ class SimulatorWindow:
 
         form = tkinter.Frame(panel)
         form.pack(side="top", fill="x", padx=8)
-        field_names = [("color", "Cor (RGB hex)"), ("arrival", "Ingresso"), ("duration", "Duração"),
+        field_names = [("id", "Identificador"), ("color", "Cor (RGB hex)"), ("arrival", "Ingresso"), ("duration", "Duração"),
                        ("period", "Período"), ("deadline", "Prazo"), ("events", "Eventos")]
         for row, (key, label) in enumerate(field_names, start=1):
             tkinter.Label(form, text=label, anchor="w").grid(row=row, column=0, sticky="w", pady=2)
@@ -187,7 +188,7 @@ class SimulatorWindow:
                                       values=("Nova", "Pronta", "Executando", "Suspensa", "Finalizada"))
         self.task_state.grid(row=0, column=1, sticky="e", pady=2, padx=(6, 0))
         self.task_state.bind("<FocusIn>", self.on_edit_focus)
-        self.task_state.bind("<<ComboboxSelected>>", self.on_edit_focus)
+        self.task_state.bind("<<ComboboxSelected>>", self.on_task_state_selected)
 
     def build_text_area(self):
         """Mostra relatório e log associados ao instante atualmente exibido."""
@@ -329,6 +330,12 @@ class SimulatorWindow:
 
     def draw_state(self, state):
         """Atualiza gráfico, seleção e campos a partir do mesmo retrato consistente."""
+        # A seleção acompanha a mesma definição ao renomear e também ao voltar
+        # para um retrato onde ela ainda usava o ID anterior.
+        if self.result is not None and self.selected_task_id:
+            selected_key = self.result.task_key(self.selected_task_id)
+            self.selected_task_id = next((info.id for info in state.result.tasks
+                                          if info.key == selected_key), 0)
         self.result = state.result
         self.shapes, self.chart_width, self.chart_height = build_gantt(self.result)
         self.draw_shapes()
@@ -384,7 +391,7 @@ class SimulatorWindow:
         used_colors = {info.color for info in state.result.tasks}
         used_colors.update(color for colors in state.result.task_colors for color in colors.values())
         color = next(f"{value:06X}" for value in range(1, 0x1000000) if f"{value:06X}" not in used_colors)
-        values = dict(id=max([info.id for info in state.result.tasks] + [0]) + 1,
+        values = dict(id=max(state.result.task_aliases, default=0) + 1,
                       color=color, arrival=state.tick, duration=1, period=4, deadline=4, events="[]")
         labels = (('id', 'Identificador'), ('color', 'Cor RGB'), ('arrival', 'Ingresso'),
                   ('duration', 'Duração'), ('period', 'Período'), ('deadline', 'Prazo'), ('events', 'Eventos'))
@@ -421,13 +428,25 @@ class SimulatorWindow:
                         num_cpus=self.system_entries["num_cpus"].get())
 
     def on_apply_task(self):
-        """Encaminha atributos e estado da instância selecionada para validação."""
+        """Aplica atributos à família; só uma escolha explícita muda o estado global."""
         if not self.selected_task_id:
             messagebox.showinfo("Edição de tarefas", "Selecione uma tarefa no gráfico antes de editar.")
             return
+        selected_state = self.task_state.get()
+        current_state = self.state_list[-1].current_task(self.selected_task_id)[1]
+        # Digitar uma cor não deve também mandar executar todas as instâncias
+        # só porque a mais antiga, usada na consulta, está Executando.
+        state_change = selected_state if self.task_state_dirty or selected_state != current_state else None
         self.apply_edit(task_id=self.selected_task_id,
                         changes={key: entry.get() for key, entry in self.entries.items()},
-                        task_state=self.task_state.get())
+                        task_state=state_change)
+
+    def on_task_state_selected(self, event=None):
+        """Distingue a escolha de estado de uma simples edição de atributos."""
+        selected_state = self.task_state.get()
+        self.on_edit_focus(event)
+        self.task_state.set(selected_state)
+        self.task_state_dirty = True
 
     def on_save(self):
         """Exporta em destino escolhido e transforma falhas de I/O em aviso na interface."""
@@ -492,6 +511,7 @@ class SimulatorWindow:
     def select_task(self, task_id):
         """Exibe a instância atual e bloqueia edição de definições removidas."""
         self.selected_task_id = task_id
+        self.task_state_dirty = False
 
         # volta todos os fundos para branco e pinta o da tarefa escolhida
         self.canvas.itemconfigure("rowbg", fill="#ffffff", outline="#ffffff")
@@ -522,7 +542,10 @@ class SimulatorWindow:
             return
 
         self.panel_title.configure(text=f"Tarefa {task_id}")
-        self.panel_hint.configure(text=f"Instância {info.instance_number} | instante {self.result.total_ticks}")
+        hint = f"Instância {info.instance_number} | instante {self.result.total_ticks}"
+        if state_name == 'Nova' and info.release_state == 'Suspensa':
+            hint += "\nEntrará suspensa no ingresso."
+        self.panel_hint.configure(text=hint)
         cpu = str(info.processor.id) if info.processor else 'nenhuma'
         lines = (f"Estado: {state_name}\nExecutado nesta instância: {info.computational_time}/{info.duration}\n"
                  f"Prazo absoluto: {info.absolute_deadline}\nAtrasada: {'sim' if info.is_late else 'não'} | CPU atual: {cpu}\n")

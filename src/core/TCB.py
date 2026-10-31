@@ -22,6 +22,9 @@ class TCB:
         self.instance_number = 1
         self.processor = None
         self.is_late = False
+        # A suspensão manual vale para a família e acompanha novas cópias.
+        # A liberação continua no calendário, mas não entra na fila de prontos.
+        self.release_state = 'Pronta'
 
         # 4. Prazos absolutos calculados
         self.end_period = self.arrival + self.period
@@ -45,6 +48,7 @@ class TCB:
         next_instance.period = self.period
         next_instance.deadline = self.deadline
         next_instance.events = list(self.events)  # Cópia rasa da lista de eventos
+        next_instance.release_state = self.release_state
 
         # Inicializa estado dinâmico da nova instância
         next_instance.instance_number = self.instance_number + 1

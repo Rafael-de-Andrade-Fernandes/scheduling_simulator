@@ -133,8 +133,11 @@ def scale(current_state):
             break
         for task in arrived:
             tasks_to_arrival.remove(task)
-            ready_queue.append(task)
-            current_state.reschedule_needed = True
+            if task.release_state == 'Suspensa':
+                current_state.suspended_tasks.append(task)
+            else:
+                ready_queue.append(task)
+                current_state.reschedule_needed = True
             result.events.append(Event("arrival", tick, task.id, task.instance_number))
             current_state.enqueue_next_instance(task)
             print(f"Task {task.id}({task.instance_number}) has arrived at tick {tick}.")
