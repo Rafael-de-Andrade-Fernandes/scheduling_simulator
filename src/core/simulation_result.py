@@ -18,6 +18,8 @@ class TaskInfo:
     def __init__(self, task):
         """Inicializa os dados de TaskInfo com vínculos e valores próprios deste objeto."""
         self.id = task.id
+        # Identidade da definição no histórico, independente do ID editável.
+        self.key = task.id
         self.color = task.color
         self.arrival = task.arrival
         self.duration = task.duration
@@ -45,6 +47,9 @@ class SimulationResult:
         self.initial_num_cpus = num_cpus
         self.num_cpus = num_cpus
         self.tasks = tasks
+        # IDs usados por uma família ficam reservados a ela. Os registros de
+        # execução conservam o ID original; o desenho resolve seu nome atual.
+        self.task_aliases = {info.id: info.id for info in tasks}
         self.total_ticks = 0
         # Cada linha contém somente as CPUs que existiam naquele tick.
         self.timeline = []
@@ -53,6 +58,15 @@ class SimulationResult:
         self.current_suspended = []
         self.task_colors = []
         self.system_events = []
+
+    def resolve_task_id(self, task_id):
+        """Associa um ID histórico ao ID atual sem reescrever ticks ou eventos."""
+        return self.task_aliases.get(task_id, task_id)
+
+    def task_key(self, task_id):
+        """Obtém a identidade estável para comparar retratos antes/depois de renomear."""
+        current_id = self.resolve_task_id(task_id)
+        return next(info.key for info in self.tasks if info.id == current_id)
 
     @property
     def max_cpus(self):

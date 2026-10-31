@@ -61,7 +61,7 @@ def make_task_status(result, task_id):
     finishes = 0
     misses = 0
     for event in result.events:
-        if event.task_id != task_id:
+        if result.resolve_task_id(event.task_id) != task_id:
             continue
         if event.kind == "arrival":
             arrivals += 1
@@ -74,7 +74,7 @@ def make_task_status(result, task_id):
     cpus_used = []
     for tick in range(result.total_ticks):
         for cpu, running in enumerate(result.timeline[tick]):
-            if running is not None and running[0] == task_id:
+            if running is not None and result.resolve_task_id(running[0]) == task_id:
                 executed_ticks += 1
                 if (cpu + 1) not in cpus_used:
                     cpus_used.append(cpu + 1)

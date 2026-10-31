@@ -76,13 +76,29 @@ Voltar a um retrato anterior restaura a tarefa removida.
 Clique em uma tarefa no gráfico para consultar/editar sua instância atual: a mais
 antiga ainda não concluída. Se todas terminaram, mostra-se a última concluída.
 Estados: Nova, Pronta, Executando, Suspensa e Finalizada. Uma tarefa removida aparece
-como Removida e fica somente para consulta. Suspensão não consome CPU e exige
-retomada manual dessa instância; futuras instâncias periódicas continuam chegando.
+como Removida e fica somente para consulta. As edições do menu são globais para
+todas as instâncias ativas e para as cópias futuras da tarefa. A instância mais
+antiga serve apenas para consulta dos valores e do progresso.
+
+Escolher Suspensa libera as CPUs de todas as instâncias da tarefa e mantém o
+progresso individual. As futuras continuam chegando pelo calendário, já suspensas,
+até uma retomada global para Pronta ou Executando. Escolher Finalizada encerra
+todas as instâncias ativas e cancela as liberações futuras da tarefa. O histórico
+das instâncias já concluídas e dos intervalos passados não é reescrito.
+
+O campo `Identificador` também pode ser editado. Ao aplicar um novo ID positivo e
+exclusivo, toda a tarefa muda de nome, inclusive suas instâncias futuras. O eixo Y
+é reordenado pelo ID atual e mantém as barras/eventos já registrados. Os rótulos
+das CPUs conservam o ID usado em cada intervalo, e um marcador S# registra a troca.
+IDs antigos ficam reservados à mesma tarefa, que pode voltar a utilizá-los; outra
+tarefa não pode assumi-los. Retroceder restaura o ID e a ordem do retrato anterior.
 
 Aplicar uma edição substitui somente o retrato atual, sem avançar o relógio. A
 validação é atômica: erros não deixam alterações parciais. O ingresso já registrado
-não pode ser reescrito; a duração não pode apagar trabalho executado; colocar uma
-tarefa em execução exige CPU livre. Para desfazer acontecimentos passados, retroceda.
+não pode ser reescrito; a duração não pode apagar trabalho executado por nenhuma
+instância. Executando exige CPUs livres para todas as instâncias já admitidas;
+Novas aguardam o ingresso antes de disputar CPU. Alterar apenas um atributo, como
+a cor, preserva os estados atuais. Para desfazer acontecimentos passados, retroceda.
 Finalizar manualmente é uma intervenção explícita do debugger; sem intervenção,
 cada instância só termina após consumir sua duração.
 
@@ -132,12 +148,11 @@ evento de quantum. A aplicação das trocas e a afinidade de CPU continuam no n�
 - `src/core/`: TCBs, CPUs, registro de algoritmos, leitura/validação, calendário e estados.
 - `src/gui/`: interface Tkinter, primitivas do Gantt, relatório e exportação SVG.
 - `src/main.py`: liga as partes e oferece a entrada CLI/GUI.
-- `tests/`: regressões e modelo independente com dez instâncias definidas pelo PDF.
+- `tests/`: regressões essenciais de execução, escalonamento, edição e requisitos do PDF.
 - `tools/`: compilação e verificação da distribuição.
 
 ```powershell
 python -B -m unittest discover -s tests -v
-python -B tests/gui_smoke.py
 ```
 
 **Gerar a distribuição**

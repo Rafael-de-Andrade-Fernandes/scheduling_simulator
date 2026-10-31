@@ -160,6 +160,7 @@ class DebugModeTests(unittest.TestCase):
         window.step_simulation = main.advance_state
         window.config_path = str(ROOT / 'configs/config.txt')
         window.is_running = False
+        window.task_state_dirty = False
         window.after_id = None
         window.result = None
         window.draw_state = Mock(side_effect=lambda state: setattr(window, 'result', state.result))

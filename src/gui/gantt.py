@@ -50,7 +50,7 @@ def build_rows(result):
     for event in result.events:
         if event.instance <= 0:
             continue
-        key = (event.task_id, event.instance)
+        key = (result.resolve_task_id(event.task_id), event.instance)
         if event.kind == 'arrival':
             spans.setdefault(key, [event.tick, result.total_ticks])
         elif event.kind == 'finish':
@@ -201,9 +201,10 @@ def tick_x(tick):
 
 def color_at(result, tick, task_id, defaults):
     """Lê a cor histórica do intervalo, preservando edições posteriores."""
+    default = defaults[result.resolve_task_id(task_id)]
     if tick < len(result.task_colors):
-        return result.task_colors[tick].get(task_id, defaults[task_id])
-    return defaults[task_id]
+        return result.task_colors[tick].get(task_id, default)
+    return default
 
 
 def cpu_at(result, tick, cpu):
@@ -237,11 +238,11 @@ def build_task_rows(shapes, result, rows_by_id, color_by_id):
         for cpu, running in enumerate(result.timeline[tick]):
             if running is None:
                 continue
-            task_id = running[0]
+            task_id = result.resolve_task_id(running[0])
             row = rows_by_id[task_id]
             row_y = row.instance_y(running[1])
             x = tick_x(tick)
-            hex_color = color_at(result, tick, task_id, color_by_id)
+            hex_color = color_at(result, tick, running[0], color_by_id)
             add_rect(shapes, x, row_y + BAR_TOP, x + CELL_W, row_y + BAR_BOTTOM,
                      to_css_color(hex_color), "#000000", task_id)
             label = f"P{cpu + 1}/I{running[1]}" if row.height > ROW_H else f"P{cpu + 1}"
@@ -253,12 +254,14 @@ def build_suspended_rows(shapes, result, rows_by_id):
     """Desenha suspensão pontilhada e um marcador do estado atual no limite do relógio."""
     for tick, suspended in enumerate(result.suspended_timeline):
         for task_id, instance in suspended:
+            task_id = result.resolve_task_id(task_id)
             row_y = rows_by_id[task_id].instance_y(instance)
             add_rect(shapes, tick_x(tick), row_y + BAR_TOP, tick_x(tick + 1), row_y + BAR_BOTTOM,
                      COLOR_SUSPENDED, COLOR_SUSPENDED, task_id, pattern="dots")
     # Marcador no limite do relógio: indica a suspensão atual sem inventar um
     # intervalo de execução futuro antes que o usuário avance o próximo passo.
     for task_id, instance in result.current_suspended:
+        task_id = result.resolve_task_id(task_id)
         row_y = rows_by_id[task_id].instance_y(instance)
         x = tick_x(result.total_ticks) + 5
         add_rect(shapes, x, row_y + BAR_TOP, x + 12, row_y + BAR_BOTTOM,
@@ -269,7 +272,7 @@ def build_suspended_rows(shapes, result, rows_by_id):
 def build_events(shapes, result, rows_by_id):
     """Posiciona chegadas, conclusões, perdas, sorteios e remoções por instante/instância."""
     for event in result.events:
-        row = rows_by_id[event.task_id]
+        row = rows_by_id[result.resolve_task_id(event.task_id)]
         row_y = row.instance_y(event.instance)
         x = tick_x(event.tick)
 
@@ -329,9 +332,10 @@ def build_cpu_rows(shapes, result, cpu_top, color_by_id):
                 add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, "OFF", 10, "middle")
             else:
                 hex_color = current_color
-                add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, to_css_color(hex_color), "#000000", current[0])
+                task_id = result.resolve_task_id(current[0])
+                add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, to_css_color(hex_color), "#000000", task_id)
                 add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, f"T{current[0]}({current[1]})",
-                         10, "middle", text_color_for(hex_color), current[0])
+                         10, "middle", text_color_for(hex_color), task_id)
             start = end
 
 
