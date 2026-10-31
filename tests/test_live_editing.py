@@ -104,7 +104,6 @@ class LiveEditingTests(unittest.TestCase):
                    dict(task_id=1, changes={'color': '123'}),
                    dict(task_id=1, changes={'duration': 0}),
                    dict(task_id=1, changes={'period': 0}),
-                   dict(task_id=1, changes={'deadline': 5}),
                    dict(task_id=1, changes={'events': '[1]'}),
                    dict(task_id=1, changes={'events': '__import__("os")'}),
                    dict(task_id=1, changes={'unknown': 1})]
@@ -174,7 +173,7 @@ class LiveEditingTests(unittest.TestCase):
         before = pickle.dumps(state)
         suspended = state.edit(task_id=1, task_state='suspensa')
         self.assertFalse(suspended.is_finished)
-        self.assertTrue(suspended.is_blocked)
+        self.assertFalse(suspended.is_blocked)  # As próximas liberações periódicas continuam agendadas.
         self.assertIsNone(suspended.processors_list[0].task_running)
         advanced = scale(suspended)
         self.assertEqual(advanced.current_task(1)[0].computational_time, 2)
@@ -198,7 +197,7 @@ class LiveEditingTests(unittest.TestCase):
         state = state.edit(task_id=1, task_state='Finalizada')
         self.assertEqual(state.current_task(1)[0].instance_number, 2)
         numbers = [item.instance_number for _, queue in state.task_queues() for item in queue]
-        self.assertEqual(sorted(numbers), [1, 2, 3])
+        self.assertEqual(sorted(numbers), [1, 2, 3, 4])
 
     def test_suspended_instance_can_miss_deadline_without_running(self):
         state = start_simulation('RM', 1, [task(duration=3, period=2)])
@@ -215,8 +214,8 @@ class LiveEditingTests(unittest.TestCase):
     def test_current_instance_falls_back_to_latest_finished_instance(self):
         state = self.complete(start_simulation('RM', 1, [task()]))
         current, name = state.current_task(1)
-        self.assertEqual((current.instance_number, name), (3, 'Finalizada'))
-        self.assertEqual(len(state.terminated_tasks), 3)
+        self.assertEqual((current.instance_number, name), (10, 'Finalizada'))
+        self.assertEqual(len(state.terminated_tasks), 10)
         with self.assertRaisesRegex(ValueError, 'não pode ser reaberta'):
             state.edit(task_id=1, task_state='Pronta')
 
@@ -228,7 +227,7 @@ class LiveEditingTests(unittest.TestCase):
         self.assertEqual(state.result.events[-1].tick, 1)
         self.assertEqual([(item.instance_number, item.arrival) for item in state.tasks_to_arrival], [(2, 5)])
         state = self.complete(state)
-        self.assertEqual([event.instance for event in state.result.events if event.kind == 'arrival'], [1, 2, 3])
+        self.assertEqual([event.instance for event in state.result.events if event.kind == 'arrival'], list(range(1, 11)))
 
     def test_completed_task_characteristics_can_be_inspected_and_edited(self):
         state = self.complete(start_simulation('RM', 1, [task()]))
@@ -322,11 +321,14 @@ class LiveEditingTests(unittest.TestCase):
         start_simulation('RM', 1, [task(duration=3)])
         window.apply_edit(task_id=1, task_state='Suspensa')
         window.on_run()
+        while window.pending:
+            window.pending.pop(0)()
         self.assertFalse(window.is_running)
-        self.assertEqual(window.pending, [])
-        self.assertIn('aguardando retomada', window.show_message.call_args.args[0])
+        self.assertTrue(state_list[-1].is_blocked)
+        tick = state_list[-1].tick
+        self.assertIn('aguardando retomada', window.state_message(state_list[-1]))
         window.on_step_forward()
-        self.assertEqual(state_list[-1].tick, 1)
+        self.assertEqual(state_list[-1].tick, tick + 1)
 
 
 if __name__ == '__main__':

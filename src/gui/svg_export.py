@@ -1,9 +1,11 @@
+"""Imagem vetorial autocontida e independente do tamanho da janela."""
 from xml.sax.saxutils import escape
 
 
 # Escreve a lista de formas (vinda de gantt.build_gantt) em um arquivo SVG.
 # SVG é um arquivo de texto simples, então não precisa de nenhuma biblioteca extra.
 def save_svg(shapes, width, height, file_path):
+    """Exporta primitivas e padrões autocontidos, sem capturar a janela."""
     lines = []
     lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">')
     lines.append(f'<rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>')

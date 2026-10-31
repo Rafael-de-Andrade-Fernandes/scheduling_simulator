@@ -1,3 +1,4 @@
+"""Entrada CLI/GUI e adaptação de caminhos para código-fonte e distribuição autônoma."""
 # Ponto de entrada do simulador.
 #
 # Uso:
@@ -10,6 +11,7 @@
 # Este arquivo só liga uma parte na outra.
 
 import contextlib
+import argparse
 import io
 import os
 import sys
@@ -28,6 +30,13 @@ from gui.svg_export import save_svg
 
 DEFAULT_CONFIG = os.path.join(BASE_DIR, 'configs', 'config.txt')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
+if getattr(sys, 'frozen', False):
+    # Dados graváveis ficam ao lado do executável, não dentro do runtime embarcado.
+    APP_DIR = os.path.dirname(sys.executable)
+    external_config = os.path.join(APP_DIR, 'configs', 'config.txt')
+    DEFAULT_CONFIG = (external_config if os.path.exists(external_config) else
+                      os.path.join(sys._MEIPASS, 'configs', 'config.txt'))
+    OUTPUT_DIR = os.path.join(APP_DIR, 'output')
 
 
 # Lê o arquivo e executa a simulação completa.
@@ -35,6 +44,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 # As funções do core imprimem mensagens e chamam exit(1) em caso de erro;
 # aqui guardamos tudo que foi impresso em "log" e capturamos o exit.
 def simulate_file(file_path):
+    """Executa a configuração e captura o log para apresentar erros sem encerrar a GUI."""
     log = io.StringIO()
     result = None
     try:
@@ -48,6 +58,7 @@ def simulate_file(file_path):
 
 # Inicia apenas o estado de tempo zero para a interface.
 def initialize_file(file_path):
+    """Carrega apenas o instante zero, permitindo editar antes de executar."""
     log = io.StringIO()
     state = None
     state_list.clear()
@@ -64,6 +75,7 @@ def initialize_file(file_path):
 
 # O log pertence ao estado, para que o retorno descarte também as mensagens futuras.
 def advance_state(current_state):
+    """Avança um intervalo e vincula suas mensagens ao retrato para permitir retorno."""
     log = io.StringIO()
     with contextlib.redirect_stdout(log):
         next_state = scale(current_state)
@@ -73,6 +85,7 @@ def advance_state(current_state):
 
 # Modo sem janela: imprime o log, gera o SVG e termina.
 def run_console(file_path):
+    """Executa sem janela e exporta o Gantt completo a partir das primitivas."""
     result, log = simulate_file(file_path)
     print(log)
     if result is None:
@@ -85,21 +98,29 @@ def run_console(file_path):
     print(f"Imagem salva em: {image_path}")
 
 
-def main():
-    config_path = DEFAULT_CONFIG
-    console_mode = False
-
-    for arg in sys.argv[1:]:
-        if arg == '--console':
-            console_mode = True
-        else:
-            config_path = arg
-
-    if console_mode:
-        run_console(config_path)
+def main(argv=None):
+    """A mesma entrada funciona a partir do código-fonte e da distribuição Windows."""
+    global OUTPUT_DIR
+    parser = argparse.ArgumentParser(description='Simulador de escalonamento do Projeto A')
+    parser.add_argument('config', nargs='?', default=DEFAULT_CONFIG, help='Arquivo de configuração')
+    parser.add_argument('--console', action='store_true', help='Executar sem interface e salvar SVG')
+    parser.add_argument('--output-dir', default=OUTPUT_DIR, help='Diretório de saída do gráfico')
+    parser.add_argument('--verify-runtime', metavar='JSON', help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    OUTPUT_DIR = os.path.abspath(args.output_dir)
+    if args.verify_runtime:
+        from runtime_check import write_runtime_report
+        return write_runtime_report(args.verify_runtime)
+    if args.console:
+        try:
+            run_console(args.config)
+        except OSError as error:
+            print(f'Erro ao gravar a imagem: {error}', file=sys.stderr)
+            return 1
     else:
-        run_gui(initialize_file, advance_state, state_list, config_path, OUTPUT_DIR)
+        run_gui(initialize_file, advance_state, state_list, args.config, OUTPUT_DIR)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,10 +1,11 @@
+"""Relógio em ticks, liberações periódicas e aplicação de decisões por eventos."""
 from utils import initialize_processors, pair_cpus_tasks
 from extract_config import extract_system_parameters, extract_task_list
-from choose_task import choose_task, draws
+from choose_task import choose_task, draws, get_algorithm, normalize_algorithm
 from copy import deepcopy
 import random
 
-from simulation_state import simulation_state
+from simulation_state import simulation_state, positive_integer, validate_changes
 from simulation_result import Event, TaskInfo, SimulationResult, SIMULATION_LIMIT
 
 
@@ -14,6 +15,7 @@ state_list = []
 # Lê o arquivo de configuração e confere se o sistema é válido.
 # Em caso de erro, imprime o motivo e chama exit(1) (como nas outras funções de leitura).
 def load_system(file_path):
+    """Carrega entradas validadas; o núcleo não impõe restrições temporais além do formato."""
     algorithm, quantum, num_cpus = extract_system_parameters(file_path)
     task_list = extract_task_list(file_path)
 
@@ -21,19 +23,25 @@ def load_system(file_path):
     print(f"quantum {quantum}")
     print(f"num_cpus {num_cpus}")
 
-    for task in task_list:
-        task.print()
-        # RM e EDF só aceitam tarefas com prazo igual ao período (Di = Pi)
-        if task.period != task.deadline:
-            print(f"Task {task.id} has a period different from its deadline. This is not allowed in RM or EDF scheduling. Exiting simulation.")
-            exit(1)
-
     return algorithm, quantum, num_cpus, task_list
 
 
 # Inicia um histórico novo, sem alterar as tarefas recebidas.
 def start_simulation(algorithm, num_cpus, task_list):
+    """Inicia um histórico independente com TCBs copiados e uma CPU por identificador."""
+    algorithm = normalize_algorithm(algorithm)
+    num_cpus = positive_integer(num_cpus, 'Número de processadores')
     tasks = deepcopy(task_list)
+    ids, colors = set(), set()
+    for task in tasks:
+        for field, value in validate_changes(task, {}).items():
+            setattr(task, field, value)
+        if task.id in ids or task.color in colors:
+            raise ValueError('Identificadores e cores precisam ser exclusivos por tarefa.')
+        if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0 or task.id <= 0:
+            raise ValueError('A definição periódica contém um tempo ou identificador inválido.')
+        ids.add(task.id)
+        colors.add(task.color)
     result = SimulationResult(algorithm, num_cpus, [TaskInfo(task) for task in tasks])
     initial_state = simulation_state(
         algorithm=algorithm,
@@ -49,6 +57,7 @@ def start_simulation(algorithm, num_cpus, task_list):
 
 # Executa a mesma transição usada pelo modo passo a passo.
 def run_simulation(algorithm, num_cpus, task_list):
+    """Reutiliza as transições do debugger até concluir todas as instâncias."""
     current_state = start_simulation(algorithm, num_cpus, task_list)
     while not current_state.is_finished:
         current_state = scale(current_state)
@@ -69,7 +78,7 @@ def _schedule(state):
     draws.clear()
 
     for _ in range(min(len(state.processors_list), len(candidates))):
-        chosen = choose_task(candidates, state.algorithm, rng)
+        chosen = choose_task(candidates, state.algorithm, rng, state)
         candidates.remove(chosen)
         selected.append(chosen)
 
@@ -98,6 +107,7 @@ def _schedule(state):
 
 # Constrói o próximo estado sem modificar o estado recebido nem o histórico.
 def scale(current_state):
+    """Processa eventos e executa um intervalo, preservando o estado recebido."""
     if current_state.is_finished:
         return current_state
 
@@ -115,7 +125,21 @@ def scale(current_state):
 
     print(f"==================== TICK: {tick} ===================")
 
-    # timeout verify
+    # O calendário libera instâncias por período, mesmo se a antecessora ainda
+    # executa. A sucessora é agendada na admissão, nunca no término ou no prazo.
+    while True:
+        arrived = [task for task in tasks_to_arrival if task.arrival <= tick]
+        if not arrived:
+            break
+        for task in arrived:
+            tasks_to_arrival.remove(task)
+            ready_queue.append(task)
+            current_state.reschedule_needed = True
+            result.events.append(Event("arrival", tick, task.id, task.instance_number))
+            current_state.enqueue_next_instance(task)
+            print(f"Task {task.id}({task.instance_number}) has arrived at tick {tick}.")
+
+    # O prazo é independente do período. Atraso é um evento, não uma conclusão.
     active_tasks = ready_queue + running_tasks + current_state.suspended_tasks
 
     for task in active_tasks:
@@ -124,22 +148,15 @@ def scale(current_state):
             print(f"SCHEADULING ERROR: Task {task.id}({task.instance_number}) has not completed its execution within its deadline at tick {tick}.")
             result.events.append(Event("deadline_miss", tick, task.id, task.instance_number))
             task.is_late = True
-            current_state.enqueue_next_instance(task)
-
-    # arrival of tasks
-
-    arrived = [task for task in tasks_to_arrival if task.arrival <= tick]
-    for task in arrived:
-        ready_queue.append(task)
-        current_state.reschedule_needed = True
-        result.events.append(Event("arrival", tick, task.id, task.instance_number))
-        print(f"Task {task.id}({task.instance_number}) has arrived at tick {tick}.")
-    if arrived:
-        tasks_to_arrival[:] = [task for task in tasks_to_arrival if task.arrival > tick]
 
     # Req. 1.1: verificar eventos a cada tick; RM/EDF só precisam de uma nova
     # decisão quando há admissão, liberação de CPU ou uma edição relevante.
     # Conclusões em t e chegadas em t são reunidas antes de executar [t, t+1).
+    policy = get_algorithm(current_state.algorithm)
+    # Políticas futuras podem registrar evento de quantum. RM/EDF não possuem
+    # esse callback e não são reavaliados por simples passagem do relógio.
+    if policy.tick_event is not None and policy.tick_event(current_state):
+        current_state.reschedule_needed = True
     if current_state.reschedule_needed:
         current_state.reschedule_needed = False
         if ready_queue:
@@ -168,10 +185,6 @@ def scale(current_state):
                 current_state.reschedule_needed = True
             if task.instance_number == SIMULATION_LIMIT:
                 print(f"Task {task.id}({task.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {tick} -> {tick + 1}.")
-            elif task.is_late == False:
-                new_instance = current_state.enqueue_next_instance(task)
-                if new_instance is not None:
-                    print(f"Task {task.id}({task.instance_number}) completed his computation_time at tick {tick} -> {tick + 1}. Enqueuing new instance to arrive at tick {new_instance.arrival}.")
 
     result.timeline.append(tick_row)
     result.suspended_timeline.append([(task.id, task.instance_number)

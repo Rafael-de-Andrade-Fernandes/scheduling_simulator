@@ -21,7 +21,7 @@ from simulator import run_simulation, scale, start_simulation, state_list
 
 
 def task(task_id=1, arrival=0, duration=1, period=4):
-    return TCB([str(task_id), 'FF0000', str(arrival), str(duration), str(period), str(period)])
+    return TCB([str(task_id), 'FF0000' if task_id == 1 else f'{task_id:06X}', str(arrival), str(duration), str(period), str(period)])
 
 
 def result_data(result):
@@ -76,13 +76,14 @@ class DebugModeTests(unittest.TestCase):
 
     def test_periodic_instances_and_idle_ticks(self):
         state = self.complete(start_simulation('RM', 1, [task()]))
-        self.assertEqual(state.tick, 9)
-        self.assertEqual(state.result.timeline,
-                         [[(1, 1)], [None], [None], [None], [(1, 2)],
-                          [None], [None], [None], [(1, 3)]])
+        self.assertEqual(state.tick, 37)
+        expected = [[None] for _ in range(37)]
+        for instance in range(1, 11):
+            expected[(instance - 1) * 4] = [(1, instance)]
+        self.assertEqual(state.result.timeline, expected)
         self.assertEqual([event.tick for event in state.result.events if event.kind == 'finish'],
-                         [1, 5, 9])
-        self.assertEqual(len(state_list), 10)
+                         list(range(1, 38, 4)))
+        self.assertEqual(len(state_list), 38)
         for tick, snapshot in enumerate(state_list):
             self.assertEqual(snapshot.tick, tick)
             self.assertEqual(len(snapshot.result.timeline), tick)
@@ -93,22 +94,22 @@ class DebugModeTests(unittest.TestCase):
 
     def test_deadline_boundary_is_not_a_miss(self):
         state = self.complete(start_simulation('EDF', 1, [task(duration=2, period=2)]))
-        self.assertEqual(state.tick, 6)
+        self.assertEqual(state.tick, 20)
         self.assertFalse(any(event.kind == 'deadline_miss' for event in state.result.events))
 
     def test_late_instances_are_not_generated_twice(self):
         state = self.complete(start_simulation('RM', 1, [task(duration=3, period=2)]))
-        self.assertEqual(state.tick, 9)
+        self.assertEqual(state.tick, 30)
         self.assertEqual([(event.instance, event.tick) for event in state.result.events
-                          if event.kind == 'arrival'], [(1, 0), (2, 2), (3, 4)])
+                          if event.kind == 'arrival'], [(number, (number - 1) * 2) for number in range(1, 11)])
         self.assertEqual([event.tick for event in state.result.events if event.kind == 'deadline_miss'],
-                         [2, 4, 6])
-        self.assertEqual(sum(event.kind == 'finish' for event in state.result.events), 3)
+                         list(range(2, 21, 2)))
+        self.assertEqual(sum(event.kind == 'finish' for event in state.result.events), 10)
 
     def test_delayed_first_arrival(self):
         state = self.complete(start_simulation('RM', 2, [task(arrival=3)]))
         self.assertEqual(state.result.timeline[:3], [[None, None]] * 3)
-        self.assertEqual(state.tick, 12)
+        self.assertEqual(state.tick, 40)
 
     def test_replay_preserves_random_ties_without_changing_global_rng(self):
         state = start_simulation('RM', 1, [task(1), task(2), task(3)])
@@ -197,12 +198,13 @@ class DebugModeTests(unittest.TestCase):
         self.assertEqual(state_list[-1].tick, 0)
         self.assertEqual(window.result.timeline, [])
 
-    def test_gui_run_continues_current_state_and_draws_every_tick(self):
+    def test_gui_run_continues_current_state_and_draws_only_final_result(self):
         window = self.make_window()
         window.on_step_forward()
         window.on_step_forward()
         window.on_step_back()
         prefix = list(state_list)
+        previous_draws = window.draw_state.call_count
         window.on_run()
         window.on_run()  # Não agenda uma segunda execução.
         self.assertEqual(len(window.pending), 1)
@@ -215,8 +217,7 @@ class DebugModeTests(unittest.TestCase):
         self.assertEqual(window.start_simulation.call_count, 1)
         window.finish_simulation.assert_called_once()
         drawn_ticks = [call.args[0].tick for call in window.draw_state.call_args_list]
-        self.assertEqual(drawn_ticks[-(state_list[-1].tick - 1):],
-                         list(range(2, state_list[-1].tick + 1)))
+        self.assertEqual(drawn_ticks[previous_draws:], [state_list[-1].tick])
         length = len(state_list)
         window.on_step_forward()
         window.on_run()

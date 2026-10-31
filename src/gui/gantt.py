@@ -1,5 +1,8 @@
+"""Primitivas do Gantt completo, com faixas para instâncias simultâneas."""
 # Gera o gráfico de Gantt como formas primitivas (independente de biblioteca).
 # Consome os dados de 'result' apenas em modo leitura.
+from dataclasses import dataclass
+import textwrap
 
 # Layout (pixels)
 CELL_W = 34         # Largura por tick
@@ -24,7 +27,50 @@ COLOR_GRID = "#e3e3e3"
 COLOR_AXIS = "#000000"
 COLOR_TEXT = "#000000"
 COLOR_SUSPENDED = "#000000"
+COLOR_SYSTEM = "#7b1fa2"
 CPU_ABSENT = "absent"
+LANE_H = ROW_H
+
+
+@dataclass
+class TaskRow:
+    """Faixas separadas impedem que duas instâncias ocultem a execução uma da outra."""
+    top: int
+    height: int
+    lanes: dict
+
+    def instance_y(self, instance):
+        """Resolve a posição vertical da instância na sua faixa, sem sobrepor outras."""
+        return self.top + self.lanes.get(instance, 0) * LANE_H
+
+
+def build_rows(result):
+    """Empacota intervalos ativos em faixas e mantém IDs decrescentes no eixo vertical."""
+    spans = {}
+    for event in result.events:
+        if event.instance <= 0:
+            continue
+        key = (event.task_id, event.instance)
+        if event.kind == 'arrival':
+            spans.setdefault(key, [event.tick, result.total_ticks])
+        elif event.kind == 'finish':
+            spans.setdefault(key, [event.tick, event.tick])[1] = max(event.tick - 1, spans.get(key, [event.tick])[0])
+    rows, offset = {}, TOP
+    for task_id in sorted((info.id for info in result.tasks), reverse=True):
+        lanes, ends = {}, []
+        jobs = sorted(((start, end, instance) for (index, instance), (start, end) in spans.items()
+                       if index == task_id))
+        for start, end, instance in jobs:
+            lane = next((index for index, previous_end in enumerate(ends) if previous_end < start), len(ends))
+            if lane == len(ends):
+                ends.append(end)
+            else:
+                ends[lane] = end
+            lanes[instance] = lane
+        height = ROW_H + max(0, len(ends) - 1) * LANE_H
+        rows[task_id] = TaskRow(offset, height, lanes)
+        offset += height
+    return rows
 
 
 # Uma forma desenhável. O campo "kind" diz quais
@@ -36,7 +82,9 @@ CPU_ABSENT = "absent"
 # task_id: se for maior que 0, a forma pertence a essa tarefa (o clique nela seleciona a tarefa).
 # is_background: marca o retângulo de fundo da linha da tarefa (usado para destacar a seleção).
 class Shape:
+    """Primitiva comum ao Canvas e ao SVG, independente da janela e do núcleo."""
     def __init__(self, kind):
+        """Inicializa os dados de Shape com vínculos e valores próprios deste objeto."""
         self.kind = kind
         self.x1 = 0
         self.y1 = 0
@@ -55,6 +103,7 @@ class Shape:
 
 
 def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id=0, is_background=False, pattern=""):
+    """Acrescenta uma área com cor/padrão e etiquetas de seleção da tarefa."""
     s = Shape("rect")
     s.x1, s.y1, s.x2, s.y2 = x1, y1, x2, y2
     s.fill = fill
@@ -66,6 +115,7 @@ def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id=0, is_background=Fal
 
 
 def add_line(shapes, x1, y1, x2, y2, color, width=1):
+    """Acrescenta uma linha para grades, eixos, setas e símbolos de eventos."""
     s = Shape("line")
     s.x1, s.y1, s.x2, s.y2 = x1, y1, x2, y2
     s.outline = color
@@ -74,6 +124,7 @@ def add_line(shapes, x1, y1, x2, y2, color, width=1):
 
 
 def add_polygon(shapes, points, fill, outline):
+    """Acrescenta um polígono independente do renderizador."""
     s = Shape("polygon")
     s.points = points
     s.fill = fill
@@ -82,6 +133,7 @@ def add_polygon(shapes, points, fill, outline):
 
 
 def add_text(shapes, x, y, text, size=11, anchor="start", color=COLOR_TEXT, task_id=0):
+    """Acrescenta texto com âncora e identificação opcional da tarefa."""
     s = Shape("text")
     s.x1, s.y1 = x, y
     s.text = text
@@ -96,24 +148,28 @@ def add_text(shapes, x, y, text, size=11, anchor="start", color=COLOR_TEXT, task
 
 # Seta para cima: a ponta fica em y_tip e a base em y_base (y_base > y_tip)
 def add_arrow_up(shapes, x, y_base, y_tip, color):
+    """Representa a chegada exatamente na coordenada horizontal do evento."""
     add_line(shapes, x, y_base, x, y_tip + 4, color, 2)
     add_polygon(shapes, [(x, y_tip), (x - 4, y_tip + 7), (x + 4, y_tip + 7)], color, color)
 
 
 # Seta para baixo: a ponta fica em y_tip e a base em y_base (y_base < y_tip)
 def add_arrow_down(shapes, x, y_base, y_tip, color):
+    """Representa a conclusão no limite do intervalo executado."""
     add_line(shapes, x, y_base, x, y_tip - 4, color, 2)
     add_polygon(shapes, [(x, y_tip), (x - 4, y_tip - 7), (x + 4, y_tip - 7)], color, color)
 
 
 # X vermelho centrado em (x, y)
 def add_cross(shapes, x, y, color):
+    """Representa perda de prazo ou remoção, diferenciadas pela cor."""
     add_line(shapes, x - 5, y - 5, x + 5, y + 5, color, 2)
     add_line(shapes, x - 5, y + 5, x + 5, y - 5, color, 2)
 
 
 # Losango centrado em (x, y)
 def add_diamond(shapes, x, y, color):
+    """Representa sorteio ou reconfiguração conforme a cor da legenda."""
     add_polygon(shapes, [(x, y - 6), (x + 6, y), (x, y + 6), (x - 6, y)], color, "#000000")
 
 
@@ -121,11 +177,13 @@ def add_diamond(shapes, x, y, color):
 
 # "00FF00" -> "#00FF00"
 def to_css_color(hex_color):
+    """Converte o RGB validado para o formato aceito por Canvas e SVG."""
     return "#" + hex_color
 
 
 # Escolhe texto preto ou branco, o que ficar mais legível sobre a cor de fundo
 def text_color_for(hex_color):
+    """Escolhe contraste legível para o rótulo sobre a cor da tarefa."""
     red = int(hex_color[0:2], 16)
     green = int(hex_color[2:4], 16)
     blue = int(hex_color[4:6], 16)
@@ -137,16 +195,19 @@ def text_color_for(hex_color):
 
 # Posição horizontal (em pixels) do início de um tick
 def tick_x(tick):
+    """Converte o relógio em posição sem impor limite máximo de tempo ao gráfico."""
     return LEFT + tick * CELL_W
 
 
 def color_at(result, tick, task_id, defaults):
+    """Lê a cor histórica do intervalo, preservando edições posteriores."""
     if tick < len(result.task_colors):
         return result.task_colors[tick].get(task_id, defaults[task_id])
     return defaults[task_id]
 
 
 def cpu_at(result, tick, cpu):
+    """Distingue CPU desligada de CPU que ainda não existia naquele intervalo."""
     row = result.timeline[tick]
     return row[cpu] if cpu < len(row) else CPU_ABSENT
 
@@ -156,18 +217,20 @@ def cpu_at(result, tick, cpu):
 # Fundo branco de cada linha de tarefa. Serve para o clique "pegar" em qualquer
 # ponto da linha e para destacar a tarefa selecionada.
 def build_row_backgrounds(shapes, result, rows_by_id):
+    """Cria fundos selecionáveis em toda a altura das faixas da tarefa."""
     for task_id in rows_by_id:
-        row_y = TOP + rows_by_id[task_id] * ROW_H
-        add_rect(shapes, LEFT, row_y, tick_x(result.total_ticks), row_y + ROW_H,
+        row = rows_by_id[task_id]
+        add_rect(shapes, LEFT, row.top, tick_x(result.total_ticks), row.top + row.height,
                  "#ffffff", "#ffffff", task_id, True)
 
 
 # Desenha a grade, os rótulos T1, T2... e as barras de execução de cada tarefa
 def build_task_rows(shapes, result, rows_by_id, color_by_id):
+    """Desenha cada execução na faixa da instância e identifica a CPU usada."""
     for task_id in rows_by_id:
-        row_y = TOP + rows_by_id[task_id] * ROW_H
-        add_line(shapes, LEFT, row_y + ROW_H, tick_x(result.total_ticks), row_y + ROW_H, COLOR_GRID)
-        add_text(shapes, LEFT - 10, row_y + (BAR_TOP + BAR_BOTTOM) / 2, f"T{task_id}", 13, "end", COLOR_TEXT, task_id)
+        row = rows_by_id[task_id]
+        add_line(shapes, LEFT, row.top + row.height, tick_x(result.total_ticks), row.top + row.height, COLOR_GRID)
+        add_text(shapes, LEFT - 10, row.top + row.height / 2, f"T{task_id}", 13, "end", COLOR_TEXT, task_id)
 
     # Barras: para cada tick e cada CPU, pinta a célula da tarefa que executou
     for tick in range(result.total_ticks):
@@ -175,29 +238,28 @@ def build_task_rows(shapes, result, rows_by_id, color_by_id):
             if running is None:
                 continue
             task_id = running[0]
-            row_y = TOP + rows_by_id[task_id] * ROW_H
+            row = rows_by_id[task_id]
+            row_y = row.instance_y(running[1])
             x = tick_x(tick)
             hex_color = color_at(result, tick, task_id, color_by_id)
             add_rect(shapes, x, row_y + BAR_TOP, x + CELL_W, row_y + BAR_BOTTOM,
                      to_css_color(hex_color), "#000000", task_id)
+            label = f"P{cpu + 1}/I{running[1]}" if row.height > ROW_H else f"P{cpu + 1}"
             add_text(shapes, x + CELL_W / 2, row_y + (BAR_TOP + BAR_BOTTOM) / 2,
-                     f"P{cpu + 1}", 11, "middle", text_color_for(hex_color), task_id)
+                     label, 8 if row.height > ROW_H else 11, "middle", text_color_for(hex_color), task_id)
 
 
 def build_suspended_rows(shapes, result, rows_by_id):
+    """Desenha suspensão pontilhada e um marcador do estado atual no limite do relógio."""
     for tick, suspended in enumerate(result.suspended_timeline):
-        executing = {running[0] for running in result.timeline[tick] if running is not None}
-        for task_id in sorted({task_id for task_id, _ in suspended}):
-            row_y = TOP + rows_by_id[task_id] * ROW_H
-            # Instâncias periódicas podem se sobrepor. Uma faixa mantém visíveis
-            # tanto a execução de uma instância quanto a suspensão de outra.
-            top = BAR_BOTTOM - 6 if task_id in executing else BAR_TOP
-            add_rect(shapes, tick_x(tick), row_y + top, tick_x(tick + 1), row_y + BAR_BOTTOM,
+        for task_id, instance in suspended:
+            row_y = rows_by_id[task_id].instance_y(instance)
+            add_rect(shapes, tick_x(tick), row_y + BAR_TOP, tick_x(tick + 1), row_y + BAR_BOTTOM,
                      COLOR_SUSPENDED, COLOR_SUSPENDED, task_id, pattern="dots")
     # Marcador no limite do relógio: indica a suspensão atual sem inventar um
     # intervalo de execução futuro antes que o usuário avance o próximo passo.
-    for task_id in sorted({task_id for task_id, _ in result.current_suspended}):
-        row_y = TOP + rows_by_id[task_id] * ROW_H
+    for task_id, instance in result.current_suspended:
+        row_y = rows_by_id[task_id].instance_y(instance)
         x = tick_x(result.total_ticks) + 5
         add_rect(shapes, x, row_y + BAR_TOP, x + 12, row_y + BAR_BOTTOM,
                  COLOR_SUSPENDED, COLOR_SUSPENDED, task_id, pattern="dots")
@@ -205,8 +267,10 @@ def build_suspended_rows(shapes, result, rows_by_id):
 
 # Desenha as setas, X e losangos dos eventos
 def build_events(shapes, result, rows_by_id):
+    """Posiciona chegadas, conclusões, perdas, sorteios e remoções por instante/instância."""
     for event in result.events:
-        row_y = TOP + rows_by_id[event.task_id] * ROW_H
+        row = rows_by_id[event.task_id]
+        row_y = row.instance_y(event.instance)
         x = tick_x(event.tick)
 
         if event.kind == "arrival":
@@ -218,10 +282,13 @@ def build_events(shapes, result, rows_by_id):
         elif event.kind == "draw":
             # o sorteio vale para o tick inteiro: o losango fica no meio da célula
             add_diamond(shapes, x + CELL_W / 2, row_y + BAR_BOTTOM + (ROW_H - BAR_BOTTOM) / 2, COLOR_DRAW)
+        elif event.kind == 'remove':
+            add_cross(shapes, x, row.top + row.height / 2, '#000000')
 
 
 # Eixo X com o número de cada tick
 def build_axis(shapes, result, axis_y):
+    """Desenha o relógio inteiro até o instante final, além da largura da janela."""
     add_line(shapes, LEFT, axis_y, tick_x(result.total_ticks), axis_y, COLOR_AXIS, 2)
     for tick in range(result.total_ticks + 1):
         x = tick_x(tick)
@@ -233,6 +300,7 @@ def build_axis(shapes, result, axis_y):
 # Uma linha por processador. Períodos seguidos na mesma situação viram um retângulo só.
 # Processador sem tarefa aparece em cinza com o texto OFF (processador desligado).
 def build_cpu_rows(shapes, result, cpu_top, color_by_id):
+    """Agrupa intervalos de mesmo trabalho/cor, incluindo OFF e ausência histórica."""
     add_text(shapes, LEFT - 10, cpu_top - 10, "Processadores", 12, "end")
 
     for cpu in range(result.max_cpus):
@@ -269,6 +337,7 @@ def build_cpu_rows(shapes, result, cpu_top, color_by_id):
 
 # Legenda com um exemplo de cada elemento gráfico. Devolve o y onde a legenda termina.
 def build_legend(shapes, legend_top):
+    """Explica todos os símbolos, padrões e identificadores utilizados no gráfico."""
     add_text(shapes, LEFT, legend_top, "Legenda", 13, "start")
 
     line_h = 26
@@ -324,29 +393,37 @@ def build_legend(shapes, legend_top):
     add_text(shapes, text_x, y, "Processador inexistente nesse intervalo (quantidade alterada)", 12)
     y += line_h
 
+    add_diamond(shapes, sample_x, y, COLOR_SYSTEM)
+    add_text(shapes, text_x, y, "Reconfiguração S# (+ agrupa alterações no mesmo instante)", 12)
+    y += line_h
+    add_cross(shapes, sample_x, y, '#000000')
+    add_text(shapes, text_x, y, "Tarefa removida; instâncias restantes canceladas", 12)
+    y += line_h
+    add_text(shapes, LEFT, y, "Em faixas simultâneas, P#/I# identifica processador e instância.", 11)
+    y += line_h
+
     return y
 
 
 # Função principal: devolve (lista_de_formas, largura, altura) do gráfico completo.
 def build_gantt(result):
+    """Compõe o gráfico completo somente a partir dos dados do resultado."""
     shapes = []
 
     # A tarefa de menor ID fica mais perto do eixo X (embaixo); a de maior ID fica no topo.
-    sorted_ids = sorted([info.id for info in result.tasks], reverse=True)
-    rows_by_id = {}
-    for row in range(len(sorted_ids)):
-        rows_by_id[sorted_ids[row]] = row
+    rows_by_id = build_rows(result)
 
     color_by_id = {}
     for info in result.tasks:
         color_by_id[info.id] = info.color
 
-    axis_y = TOP + len(sorted_ids) * ROW_H
+    axis_y = TOP + sum(row.height for row in rows_by_id.values())
     cpu_top = axis_y + 70
-    legend_top = cpu_top + result.max_cpus * CPU_ROW_H + 30
+    system_top = cpu_top + result.max_cpus * CPU_ROW_H + 30
+    width = max(MIN_WIDTH, tick_x(result.total_ticks) + RIGHT + 90)
 
     add_text(shapes, LEFT, 24,
-             f"Gráfico de Gantt - algoritmo {result.algorithm} - {result.num_cpus} CPU(s) - {result.total_ticks} ticks",
+             f"Gráfico de Gantt - algoritmo atual {result.algorithm} - {result.num_cpus} CPU(s) - {result.total_ticks} ticks",
              15, "start")
 
     build_row_backgrounds(shapes, result, rows_by_id)
@@ -360,6 +437,21 @@ def build_gantt(result):
     build_axis(shapes, result, axis_y)
     build_events(shapes, result, rows_by_id)
     build_cpu_rows(shapes, result, cpu_top, color_by_id)
+    add_text(shapes, LEFT, system_top,
+             f"Configuração inicial: {result.initial_algorithm}, {result.initial_num_cpus} CPU(s)", 11)
+    next_y = system_top + 20
+    markers = {}
+    for index, event in enumerate(result.system_events, start=1):
+        markers.setdefault(event.tick, []).append(index)
+        description = f"S{index} | t={event.tick}: {event.description}"
+        for line in textwrap.wrap(description, width=max(40, int((width - LEFT - RIGHT) / 6.2))):
+            add_text(shapes, LEFT, next_y, line, 11)
+            next_y += 17
+    for tick, numbers in markers.items():
+        add_diamond(shapes, tick_x(tick), axis_y + 35, COLOR_SYSTEM)
+        label = f"S{numbers[0]}" + ('+' if len(numbers) > 1 else '')
+        add_text(shapes, tick_x(tick), axis_y + 49, label, 9, 'middle', COLOR_SYSTEM)
+    legend_top = next_y + 15
     height = build_legend(shapes, legend_top) + 10
 
     width = tick_x(result.total_ticks) + RIGHT + 90    # 90 = espaço do texto "tempo (ticks)"

@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'src/core'))
 
 import simulator
-from simulation_result import SIMULATION_LIMIT
+# O oráculo usa o limite literal do PDF, sem importar a constante de produção.
+EXPECTED_INSTANCES = 10
 from simulator import scale, start_simulation, state_list
 import test_debug_mode as debug_tests
 
@@ -184,15 +185,15 @@ class EventSchedulingTests(unittest.TestCase):
     def test_deadline_miss_does_not_remove_or_reschedule_last_instance(self):
         for algorithm in ('RM', 'EDF'):
             with self.subTest(algorithm=algorithm):
-                state = start_simulation(algorithm, 1, [task(duration=8, period=2)])
-                for _ in range(6):
+                state = start_simulation(algorithm, 1, [task(duration=24, period=2)])
+                for _ in range(20):
                     state = scale(state)
                 state, trace = self.step(state)  # Prazo da instância 3, sem sucessora a admitir.
                 self.assertEqual(trace.ticks, [])
                 self.assertEqual(trace.choices, 0)
                 self.assertEqual(job_ids(state.running_tasks), [(1, 1)])
-                self.assertEqual(job_ids(state.ready_queue), [(1, 2), (1, 3)])
-                self.assertIn(('deadline_miss', 6, 3),
+                self.assertEqual(job_ids(state.ready_queue), [(1, number) for number in range(2, 11)])
+                self.assertIn(('deadline_miss', 20, 10),
                               [(event.kind, event.tick, event.instance) for event in state.result.events])
 
     def test_successor_arrival_after_missed_deadline_is_a_dispatch_event(self):
@@ -365,7 +366,7 @@ class EventSchedulingTests(unittest.TestCase):
 
                         with patch('simulator._schedule', side_effect=dispatch):
                             while not state.is_finished:
-                                self.assertLess(state.tick, 300)
+                                self.assertLess(state.tick, 1000)
                                 state = scale(state)
                         self.assertEqual(state.result.timeline, expected_rows)
                         self.assertEqual(sorted((event.kind, event.tick, event.task_id, event.instance)
@@ -384,25 +385,26 @@ def reference_run(specs, algorithm, cpus):
     processors = [None] * cpus
 
     def create(spec, instance, arrival):
-        index, _, duration, period = spec
-        if instance > SIMULATION_LIMIT or (index, instance) in created:
+        index, _, duration, period = spec[:4]
+        relative_deadline = spec[4] if len(spec) > 4 else period
+        if instance > EXPECTED_INSTANCES or (index, instance) in created:
             return
         created.add((index, instance))
         jobs.append(dict(spec=spec, id=index, instance=instance, arrival=arrival,
-                         duration=duration, period=period, deadline=arrival + period,
+                         duration=duration, period=period, relative_deadline=relative_deadline, deadline=arrival + relative_deadline,
                          executed=0, late=False, status='new'))
 
     for spec in specs:
-        create(spec, 1, spec[1])
+        for instance in range(1, EXPECTED_INSTANCES + 1):
+            create(spec, instance, spec[1] + (instance - 1) * spec[3])
     tick = 0
     while any(job['status'] != 'finished' for job in jobs):
-        if tick > 300:
+        if tick > 1000:
             raise AssertionError('O modelo de referência não terminou')
         for job in list(jobs):
             if job['status'] == 'active' and not job['late'] and job['deadline'] <= tick:
                 job['late'] = True
                 events.append(('deadline_miss', tick, job['id'], job['instance']))
-                create(job['spec'], job['instance'] + 1, job['arrival'] + job['period'])
         for job in jobs:
             if job['status'] == 'new' and job['arrival'] <= tick:
                 job['status'] = 'active'
@@ -411,7 +413,7 @@ def reference_run(specs, algorithm, cpus):
 
         def priority(job):
             return (job['period'] if algorithm == 'RM' else job['deadline'],
-                    -int(id(job) in running), job['period'], job['arrival'], job['duration'])
+                    -int(id(job) in running), job['relative_deadline'], job['arrival'], job['duration'])
 
         chosen = sorted((job for job in jobs if job['status'] == 'active'), key=priority)[:cpus]
         chosen_ids = {id(job) for job in chosen}
@@ -430,8 +432,6 @@ def reference_run(specs, algorithm, cpus):
                     job['status'] = 'finished'
                     events.append(('finish', tick + 1, job['id'], job['instance']))
                     processors[cpu] = None
-                    if not job['late']:
-                        create(job['spec'], job['instance'] + 1, job['arrival'] + job['period'])
         rows.append(row)
         tick += 1
     return rows, events
