@@ -4,3 +4,6 @@ venv/
 .env
 output/
 docs/
+.build-env/
+build/
+dist/
