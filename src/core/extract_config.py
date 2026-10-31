@@ -1,6 +1,12 @@
 import os
 import TCB
 from task_validation import task_is_valid
+from choose_task import SCHEDULERS
+
+# Valores padrão usados quando a primeira linha do arquivo não informa o parâmetro
+DEFAULT_ALGORITHM = 'RM'
+DEFAULT_QUANTUM = 1
+DEFAULT_NUM_CPUS = 1
 
 def get_valid_lines(file_path):
     if not os.path.exists(file_path):
@@ -27,19 +33,32 @@ def extract_system_parameters(file_path):
     valid_lines = get_valid_lines(file_path)
 
     system_line = valid_lines[0].rstrip(';').split(';')
-    
-    if len(system_line) != 3:
+
+    if len(system_line) > 3:
         print("Error: The first line is poorly formatted.")
         exit(1)
-        
-    algorithm = system_line[0].strip().upper() 
-    if algorithm not in ("RM", "EDF"):
-        print(f"Error: Unsupported scheduling algorithm '{algorithm}'. Must be 'RM' or 'EDF'.")
+
+    # Parâmetros que faltam na primeira linha recebem o valor padrão (item 3.2 do PDF)
+    while len(system_line) < 3:
+        system_line.append("")
+
+    algorithm = system_line[0].strip().upper()
+    if algorithm == "":
+        algorithm = DEFAULT_ALGORITHM
+        print(f"Notice: algorithm not informed. Using the default: {DEFAULT_ALGORITHM}.")
+    if algorithm not in SCHEDULERS:
+        print(f"Error: Unsupported scheduling algorithm '{algorithm}'. Must be one of: {', '.join(sorted(SCHEDULERS.keys()))}.")
         exit(1)
 
     quantum_str = system_line[1].strip()
     num_cpus_str = system_line[2].strip()
-    
+    if quantum_str == "":
+        quantum_str = str(DEFAULT_QUANTUM)
+        print(f"Notice: quantum not informed. Using the default: {DEFAULT_QUANTUM}.")
+    if num_cpus_str == "":
+        num_cpus_str = str(DEFAULT_NUM_CPUS)
+        print(f"Notice: number of CPUs not informed. Using the default: {DEFAULT_NUM_CPUS}.")
+
     # Validation for System Parameters
     try:
         quantum = int(quantum_str)
@@ -53,7 +72,7 @@ def extract_system_parameters(file_path):
     except ValueError:
         print("Error: All the parameters must be integers.")
         exit(1)
-    
+
     print("=== SYSTEM PARAMETERS ===")
     print(f"Scheduling Algorithm: {algorithm}")
     print(f"Quantum: {quantum}")
