@@ -1,2 +1,0 @@
-# Necessário apenas para produzir a distribuição; não é dependência do usuário.
-pyinstaller==6.22.3

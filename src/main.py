@@ -105,12 +105,8 @@ def main(argv=None):
     parser.add_argument('config', nargs='?', default=DEFAULT_CONFIG, help='Arquivo de configuração')
     parser.add_argument('--console', action='store_true', help='Executar sem interface e salvar SVG')
     parser.add_argument('--output-dir', default=OUTPUT_DIR, help='Diretório de saída do gráfico')
-    parser.add_argument('--verify-runtime', metavar='JSON', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     OUTPUT_DIR = os.path.abspath(args.output_dir)
-    if args.verify_runtime:
-        from runtime_check import write_runtime_report
-        return write_runtime_report(args.verify_runtime)
     if args.console:
         try:
             run_console(args.config)
