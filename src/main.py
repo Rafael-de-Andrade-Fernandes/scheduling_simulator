@@ -21,12 +21,12 @@ BASE_DIR = os.path.dirname(SRC_DIR)
 # Esta linha é parecida com o -I do gcc: diz ao Python em qual pasta procurá-los.
 sys.path.insert(0, os.path.join(SRC_DIR, 'core'))
 
-from simulator import load_system, run_simulation
+from simulator import load_system, run_simulation, start_simulation, scale, state_list
 from gui.window import run_gui
 from gui.gantt import build_gantt
 from gui.svg_export import save_svg
 
-DEFAULT_CONFIG = os.path.join(BASE_DIR, 'configs', 'config_test.txt')
+DEFAULT_CONFIG = os.path.join(BASE_DIR, 'configs', 'config.txt')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
 
@@ -44,6 +44,31 @@ def simulate_file(file_path):
     except SystemExit:
         result = None
     return result, log.getvalue()
+
+
+# Inicia apenas o estado de tempo zero para a interface.
+def initialize_file(file_path):
+    log = io.StringIO()
+    state = None
+    state_list.clear()
+    try:
+        with contextlib.redirect_stdout(log):
+            algorithm, quantum, num_cpus, task_list = load_system(file_path)
+            state = start_simulation(algorithm, num_cpus, task_list)
+    except SystemExit:
+        pass
+    if state is not None:
+        state.log = log.getvalue()
+    return state, log.getvalue()
+
+
+# O log pertence ao estado, para que o retorno descarte também as mensagens futuras.
+def advance_state(current_state):
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        next_state = scale(current_state)
+    next_state.log = current_state.log + log.getvalue()
+    return next_state
 
 
 # Modo sem janela: imprime o log, gera o SVG e termina.
@@ -73,7 +98,8 @@ def main():
     if console_mode:
         run_console(config_path)
     else:
-        run_gui(simulate_file, config_path, OUTPUT_DIR)
+        run_gui(initialize_file, advance_state, state_list, config_path, OUTPUT_DIR)
 
 
-main()
+if __name__ == "__main__":
+    main()

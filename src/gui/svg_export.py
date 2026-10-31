@@ -7,11 +7,17 @@ def save_svg(shapes, width, height, file_path):
     lines = []
     lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">')
     lines.append(f'<rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>')
+    # O padrão pertence ao próprio SVG, sem imagens externas ou dependências.
+    lines.append('<defs><pattern id="suspended-dots" width="4" height="4" patternUnits="userSpaceOnUse">'
+                 '<rect width="4" height="4" fill="#ffffff"/>'
+                 '<circle cx="1" cy="1" r="0.8" fill="#000000"/>'
+                 '</pattern></defs>')
 
     for s in shapes:
         if s.kind == "rect":
+            fill = "url(#suspended-dots)" if s.pattern == "dots" else s.fill
             lines.append(f'<rect x="{s.x1}" y="{s.y1}" width="{s.x2 - s.x1}" height="{s.y2 - s.y1}" '
-                         f'fill="{s.fill}" stroke="{s.outline}"/>')
+                         f'fill="{fill}" stroke="{s.outline}"/>')
 
         elif s.kind == "line":
             lines.append(f'<line x1="{s.x1}" y1="{s.y1}" x2="{s.x2}" y2="{s.y2}" '

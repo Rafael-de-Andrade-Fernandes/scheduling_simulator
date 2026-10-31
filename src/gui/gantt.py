@@ -8,7 +8,7 @@ CPU_ROW_H = 30      # Altura por CPU
 LEFT = 100          # Margem esquerda (rótulos)
 TOP = 50            # Margem superior (título)
 RIGHT = 30          # Margem direita
-MIN_WIDTH = 640     # Largura mínima total
+MIN_WIDTH = 820     # Inclui a legenda completa mesmo em simulações curtas
 
 # Offsets verticais da barra de execução (relativos a ROW_H)
 BAR_TOP = 18        # Topo da barra (0..BAR_TOP: término / deadline miss)
@@ -23,6 +23,8 @@ COLOR_OFF = "#d0d0d0"
 COLOR_GRID = "#e3e3e3"
 COLOR_AXIS = "#000000"
 COLOR_TEXT = "#000000"
+COLOR_SUSPENDED = "#000000"
+CPU_ABSENT = "absent"
 
 
 # Uma forma desenhável. O campo "kind" diz quais
@@ -49,15 +51,17 @@ class Shape:
         self.anchor = "start"
         self.task_id = 0
         self.is_background = False
+        self.pattern = ""   # "dots" = pontos pretos sobre o fundo
 
 
-def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id=0, is_background=False):
+def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id=0, is_background=False, pattern=""):
     s = Shape("rect")
     s.x1, s.y1, s.x2, s.y2 = x1, y1, x2, y2
     s.fill = fill
     s.outline = outline
     s.task_id = task_id
     s.is_background = is_background
+    s.pattern = pattern
     shapes.append(s)
 
 
@@ -136,6 +140,17 @@ def tick_x(tick):
     return LEFT + tick * CELL_W
 
 
+def color_at(result, tick, task_id, defaults):
+    if tick < len(result.task_colors):
+        return result.task_colors[tick].get(task_id, defaults[task_id])
+    return defaults[task_id]
+
+
+def cpu_at(result, tick, cpu):
+    row = result.timeline[tick]
+    return row[cpu] if cpu < len(row) else CPU_ABSENT
+
+
 # ---------- Montagem do gráfico ----------
 
 # Fundo branco de cada linha de tarefa. Serve para o clique "pegar" em qualquer
@@ -156,18 +171,36 @@ def build_task_rows(shapes, result, rows_by_id, color_by_id):
 
     # Barras: para cada tick e cada CPU, pinta a célula da tarefa que executou
     for tick in range(result.total_ticks):
-        for cpu in range(result.num_cpus):
-            running = result.timeline[tick][cpu]
+        for cpu, running in enumerate(result.timeline[tick]):
             if running is None:
                 continue
             task_id = running[0]
             row_y = TOP + rows_by_id[task_id] * ROW_H
             x = tick_x(tick)
-            hex_color = color_by_id[task_id]
+            hex_color = color_at(result, tick, task_id, color_by_id)
             add_rect(shapes, x, row_y + BAR_TOP, x + CELL_W, row_y + BAR_BOTTOM,
                      to_css_color(hex_color), "#000000", task_id)
             add_text(shapes, x + CELL_W / 2, row_y + (BAR_TOP + BAR_BOTTOM) / 2,
                      f"P{cpu + 1}", 11, "middle", text_color_for(hex_color), task_id)
+
+
+def build_suspended_rows(shapes, result, rows_by_id):
+    for tick, suspended in enumerate(result.suspended_timeline):
+        executing = {running[0] for running in result.timeline[tick] if running is not None}
+        for task_id in sorted({task_id for task_id, _ in suspended}):
+            row_y = TOP + rows_by_id[task_id] * ROW_H
+            # Instâncias periódicas podem se sobrepor. Uma faixa mantém visíveis
+            # tanto a execução de uma instância quanto a suspensão de outra.
+            top = BAR_BOTTOM - 6 if task_id in executing else BAR_TOP
+            add_rect(shapes, tick_x(tick), row_y + top, tick_x(tick + 1), row_y + BAR_BOTTOM,
+                     COLOR_SUSPENDED, COLOR_SUSPENDED, task_id, pattern="dots")
+    # Marcador no limite do relógio: indica a suspensão atual sem inventar um
+    # intervalo de execução futuro antes que o usuário avance o próximo passo.
+    for task_id in sorted({task_id for task_id, _ in result.current_suspended}):
+        row_y = TOP + rows_by_id[task_id] * ROW_H
+        x = tick_x(result.total_ticks) + 5
+        add_rect(shapes, x, row_y + BAR_TOP, x + 12, row_y + BAR_BOTTOM,
+                 COLOR_SUSPENDED, COLOR_SUSPENDED, task_id, pattern="dots")
 
 
 # Desenha as setas, X e losangos dos eventos
@@ -202,25 +235,32 @@ def build_axis(shapes, result, axis_y):
 def build_cpu_rows(shapes, result, cpu_top, color_by_id):
     add_text(shapes, LEFT - 10, cpu_top - 10, "Processadores", 12, "end")
 
-    for cpu in range(result.num_cpus):
+    for cpu in range(result.max_cpus):
         row_y = cpu_top + cpu * CPU_ROW_H
         add_text(shapes, LEFT - 10, row_y + CPU_ROW_H / 2, f"CPU {cpu + 1}", 12, "end")
 
         start = 0
         while start < result.total_ticks:
-            current = result.timeline[start][cpu]
+            current = cpu_at(result, start, cpu)
+            current_color = (color_at(result, start, current[0], color_by_id)
+                             if current not in (None, CPU_ABSENT) else None)
             # avança "end" enquanto a CPU continua fazendo a mesma coisa
             end = start + 1
-            while end < result.total_ticks and result.timeline[end][cpu] == current:
+            while (end < result.total_ticks and cpu_at(result, end, cpu) == current
+                   and (current in (None, CPU_ABSENT)
+                        or color_at(result, end, current[0], color_by_id) == current_color)):
                 end = end + 1
 
             x1 = tick_x(start)
             x2 = tick_x(end)
-            if current is None:
+            if current == CPU_ABSENT:
+                add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, "#ffffff", COLOR_GRID)
+                add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, "-", 10, "middle", "#808080")
+            elif current is None:
                 add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, COLOR_OFF, "#808080")
                 add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, "OFF", 10, "middle")
             else:
-                hex_color = color_by_id[current[0]]
+                hex_color = current_color
                 add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, to_css_color(hex_color), "#000000", current[0])
                 add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, f"T{current[0]}({current[1]})",
                          10, "middle", text_color_for(hex_color), current[0])
@@ -248,6 +288,12 @@ def build_legend(shapes, legend_top):
     y += line_h
 
     # 3. chegada
+    add_rect(shapes, sample_x - 14, y - 9, sample_x + 14, y + 9,
+             COLOR_SUSPENDED, COLOR_SUSPENDED, pattern="dots")
+    add_text(shapes, text_x, y, "Tarefa suspensa (preto pontilhado; marcador à direita = estado atual)", 12)
+    y += line_h
+
+    # Chegada
     add_arrow_up(shapes, sample_x, y + 10, y - 10, COLOR_ARRIVAL)
     add_text(shapes, text_x, y, "Chegada de uma instância da tarefa", 12)
     y += line_h
@@ -273,6 +319,11 @@ def build_legend(shapes, legend_top):
     add_text(shapes, text_x, y, "Processador desligado (não há tarefa para executar)", 12)
     y += line_h
 
+    add_rect(shapes, sample_x - 14, y - 9, sample_x + 14, y + 9, "#ffffff", COLOR_GRID)
+    add_text(shapes, sample_x, y, "-", 10, "middle", "#808080")
+    add_text(shapes, text_x, y, "Processador inexistente nesse intervalo (quantidade alterada)", 12)
+    y += line_h
+
     return y
 
 
@@ -292,7 +343,7 @@ def build_gantt(result):
 
     axis_y = TOP + len(sorted_ids) * ROW_H
     cpu_top = axis_y + 70
-    legend_top = cpu_top + result.num_cpus * CPU_ROW_H + 30
+    legend_top = cpu_top + result.max_cpus * CPU_ROW_H + 30
 
     add_text(shapes, LEFT, 24,
              f"Gráfico de Gantt - algoritmo {result.algorithm} - {result.num_cpus} CPU(s) - {result.total_ticks} ticks",
@@ -305,6 +356,7 @@ def build_gantt(result):
         add_line(shapes, tick_x(tick), TOP, tick_x(tick), axis_y, COLOR_GRID)
 
     build_task_rows(shapes, result, rows_by_id, color_by_id)
+    build_suspended_rows(shapes, result, rows_by_id)
     build_axis(shapes, result, axis_y)
     build_events(shapes, result, rows_by_id)
     build_cpu_rows(shapes, result, cpu_top, color_by_id)
