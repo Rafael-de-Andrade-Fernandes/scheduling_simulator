@@ -1,9 +1,12 @@
+"""Bloco de controle por instância, separado de processadores e renderização."""
 import ast
 
 
 class TCB:
+    """Estado de uma instância periódica, incluindo características e consumo de CPU."""
     def __init__(self, task_line):
         # 1. Pré-processamento: remove espaços em branco das extremidades
+        """Inicializa os dados de TCB com vínculos e valores próprios deste objeto."""
         fields = [field.strip() for field in task_line]
 
         # 2. Atribuição dos campos base (equivalente aos membros de uma struct em C)
@@ -32,6 +35,7 @@ class TCB:
 
     def create_next_instance(self):
         # Cria uma nova instância vazia sem reprocessar strings
+        """Deriva o próximo ingresso pelo período e calcula seu próprio prazo absoluto."""
         next_instance = TCB.__new__(TCB)
 
         # Copia características estáticas do descritor de tarefa
@@ -56,6 +60,7 @@ class TCB:
         return next_instance
 
     def __str__(self):
+        """Descreve características e estado dinâmico para os logs da simulação."""
         return (
             f"Task ID {self.id}:\n"
             f"  - Color: {self.color}\n"
@@ -72,4 +77,5 @@ class TCB:
         )
 
     def print(self):
+        """Emite o diagnóstico no log, sem depender da biblioteca gráfica."""
         print(self)

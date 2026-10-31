@@ -66,6 +66,8 @@ def main_test():
             else:
                 window.root.geometry('1180x860+30+30')
                 window.root.deiconify()
+                window.root.attributes('-topmost', True)
+                window.root.lift()
                 window.root.update()
                 time.sleep(0.2)
                 image_path = ROOT / 'output' / 'validation' / 'live-editing.png'
@@ -73,6 +75,7 @@ def main_test():
                 x, y = window.root.winfo_rootx(), window.root.winfo_rooty()
                 ImageGrab.grab(bbox=(x, y, x + window.root.winfo_width(),
                                     y + window.root.winfo_height())).save(image_path)
+                window.root.attributes('-topmost', False)
                 assert window.apply_task_button.winfo_ismapped()
                 assert window.edit_hint.winfo_ismapped()
                 assert window.apply_task_button.winfo_rooty() + window.apply_task_button.winfo_height() < y + window.root.winfo_height()
@@ -116,6 +119,22 @@ def main_test():
             window.on_step_forward()
             assert state_list[-1].is_finished
             assert state_list[-1].tick == final_tick
+            # Inclusão e remoção reais, inclusive depois de terminar a simulação.
+            window.on_add_task()
+            assert window.add_task_dialog.winfo_exists()
+            values = dict(id=99, color='224466', arrival=final_tick, duration=1, period=3, deadline=2, events='[]')
+            for key, value in values.items():
+                replace(window.add_task_fields[key], value)
+            window.add_task_submit()
+            assert window.selected_task_id == 99
+            assert state_list[-1].current_task(99)[1] == 'Nova'
+            window.on_step_forward()
+            assert state_list[-1].current_task(99)[0].instance_number == 2
+            window.on_remove_task()
+            assert state_list[-1].current_task(99)[1] == 'Removida'
+            assert str(window.apply_task_button.cget('state')) == 'disabled'
+            assert str(window.remove_task_button.cget('state')) == 'disabled'
+            assert any(event.description.startswith('Tarefa 99 removida') for event in state_list[-1].result.system_events)
             print(f'Tkinter real: edição de sistema/tarefa, suspensão, retomada, pausa, retorno e SVG OK (t={final_tick}).')
         finally:
             window.root.destroy()

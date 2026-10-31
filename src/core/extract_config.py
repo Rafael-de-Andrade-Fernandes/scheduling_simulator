@@ -1,13 +1,16 @@
+"""Leitura de texto configurável, diagnósticos e construção das definições periódicas."""
 import os
 import TCB
 from task_validation import task_is_valid
+from choose_task import normalize_algorithm
 
 def get_valid_lines(file_path):
+    """Ignora espaço e linhas vazias e converte falhas de leitura em diagnósticos."""
     if not os.path.exists(file_path):
         print(f"Error: The file '{file_path}' was not found.")
         exit(1)
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with open(file_path, 'r', encoding='utf-8-sig') as file:
             lines = file.readlines()
             
         valid_lines = [line.strip() for line in lines if line.strip()]
@@ -24,6 +27,7 @@ def get_valid_lines(file_path):
 
 def extract_system_parameters(file_path):
 
+    """Lê algoritmo, quantum e CPUs, validando antes de construir a simulação."""
     valid_lines = get_valid_lines(file_path)
 
     system_line = valid_lines[0].rstrip(';').split(';')
@@ -32,9 +36,10 @@ def extract_system_parameters(file_path):
         print("Error: The first line is poorly formatted.")
         exit(1)
         
-    algorithm = system_line[0].strip().upper() 
-    if algorithm not in ("RM", "EDF"):
-        print(f"Error: Unsupported scheduling algorithm '{algorithm}'. Must be 'RM' or 'EDF'.")
+    try:
+        algorithm = normalize_algorithm(system_line[0])
+    except ValueError as error:
+        print(f"Error: {error}")
         exit(1)
 
     quantum_str = system_line[1].strip()
@@ -64,16 +69,19 @@ def extract_system_parameters(file_path):
 
 def extract_task_list(file_path):
     
+    """Constrói TCBs validados, preservando IDs/cores únicos e ignorando aperiódicas."""
     valid_lines = get_valid_lines(file_path)    
 
     task_list = []
     seen_ids = set()
+    seen_colors = set()
 
     print("=== TASK LIST ===")
     for i in range(1, len(valid_lines)):
         task_line = valid_lines[i].rstrip(';').split(';')
-        if task_is_valid(task_line, i, seen_ids):
+        if task_is_valid(task_line, i, seen_ids, seen_colors):
             task = TCB.TCB(task_line)
+            task.color = task.color.upper()
             if task.period == 0:
                 print(f"Warning: Line {i+1} ignored. Task ID {task.id} is aperiodic (period=0) and not supported yet.")
                 continue

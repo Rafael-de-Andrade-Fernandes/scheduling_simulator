@@ -1,7 +1,9 @@
+"""Relatórios de execução derivados exclusivamente dos resultados históricos."""
 # Monta o texto de resumo mostrado ao usuário: períodos em que cada processador
 # ficou desligado e lista de perdas de prazo. Só lê o resultado da simulação.
 
 def make_report(result):
+    """Resume configuração, períodos OFF e perdas de prazo sem alterar o resultado."""
     lines = []
     lines.append(f"Algoritmo: {result.algorithm} | Processadores: {result.num_cpus} | Duração: {result.total_ticks} ticks")
     lines.append("")
@@ -36,6 +38,7 @@ def make_report(result):
 # Devolve a lista de pares (inicio, fim) dos períodos em que a CPU ficou sem tarefa.
 # O intervalo é aberto no fim: [2, 5) quer dizer ticks 2, 3 e 4.
 def find_off_periods(result, cpu):
+    """Calcula intervalos semiabertos apenas enquanto a CPU realmente existia."""
     periods = []
     tick = 0
     while tick < result.total_ticks:
@@ -53,6 +56,7 @@ def find_off_periods(result, cpu):
 # Situação de uma tarefa ao final da simulação, calculada a partir do resultado.
 # Devolve uma lista de pares (nome, valor) para mostrar no menu lateral.
 def make_task_status(result, task_id):
+    """Acumula chegadas, conclusões e execução de todas as instâncias de uma tarefa."""
     arrivals = 0
     finishes = 0
     misses = 0
