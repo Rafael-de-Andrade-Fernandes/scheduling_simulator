@@ -1,81 +1,88 @@
-"""Registro extensível de políticas e regras comuns de desempate do Projeto A."""
+"""Algoritmos de escalonamento (RM, EDF) e regras de desempate."""
 import random
-from dataclasses import dataclass
-from typing import Callable
 
 
-@dataclass(frozen=True)
+# Um algoritmo de escalonamento. Funciona como uma struct com funções:
+#   name          abreviação usada no arquivo de configuração (ex.: "RM")
+#   primary_key   função que dá a "nota" da tarefa; menor nota = maior prioridade
+#   selector      (opcional) função que escolhe a tarefa no lugar do primary_key
+#   tick_event    (opcional) função chamada a cada tick; devolve True se precisa reescalonar
+#   edit_signature (opcional) resumo dos dados que uma edição pode mudar na decisão
 class SchedulingAlgorithm:
-    """Política registrada: prioridade primária e desempates comuns do enunciado."""
-    name: str
-    primary_key: Callable
-    selector: Callable | None = None
-    tick_event: Callable | None = None
-    edit_signature: Callable | None = None
+    def __init__(self, name, primary_key, selector=None, tick_event=None, edit_signature=None):
+        self.name = name
+        self.primary_key = primary_key
+        self.selector = selector
+        self.tick_event = tick_event
+        self.edit_signature = edit_signature
 
+    # Resume os dados que uma edição pode alterar na escolha desta política.
     def priority_signature(self, task):
-        # Usada apenas ao editar: detecta se a alteração pode mudar a escolha.
-        """Resume os dados que uma edição pode alterar na decisão desta política."""
         if self.edit_signature is not None:
             return self.edit_signature(task)
         return (self.primary_key(task), task.deadline, task.arrival, task.duration)
 
+    # Devolve a tarefa mais prioritária entre duas (desempata se a nota for igual).
     def compare(self, first, second, rng=None):
-        """Compara a prioridade primária e aplica os desempates comuns quando necessário."""
-        first_key, second_key = self.primary_key(first), self.primary_key(second)
+        first_key = self.primary_key(first)
+        second_key = self.primary_key(second)
         if first_key != second_key:
             return first if first_key < second_key else second
         return break_tie(first, second, rng)
 
 
+# Tabela de algoritmos: nome -> SchedulingAlgorithm
 ALGORITHMS = {}
 
 
-def register_algorithm(name, primary_key=None, *, selector=None, tick_event=None, edit_signature=None):
-    """Acrescenta uma política sem alterar o relógio, o estado ou o carregador."""
+# Acrescenta um algoritmo na tabela (sem mexer no relógio, no estado ou no carregador).
+def register_algorithm(name, primary_key=None, selector=None, tick_event=None, edit_signature=None):
     name = str(name).strip().upper()
     if not name or not name.isalnum() or not (callable(primary_key) or callable(selector)):
         raise ValueError("O algoritmo precisa de abreviação alfanumérica e função de prioridade.")
     if name in ALGORITHMS:
         raise ValueError(f"O algoritmo {name} já está registrado.")
-    if any(value is not None and not callable(value) for value in (selector, tick_event, edit_signature)):
-        raise ValueError("Os pontos de extensão do algoritmo precisam ser funções.")
-    ALGORITHMS[name] = SchedulingAlgorithm(name, primary_key or (lambda task: 0), selector, tick_event, edit_signature)
+    for function in (selector, tick_event, edit_signature):
+        if function is not None and not callable(function):
+            raise ValueError("Os pontos de extensão do algoritmo precisam ser funções.")
+    if primary_key is None:
+        primary_key = lambda task: 0
+    ALGORITHMS[name] = SchedulingAlgorithm(name, primary_key, selector, tick_event, edit_signature)
 
 
+# Lista as abreviações dos algoritmos cadastrados.
 def available_algorithms():
-    """Expõe as abreviações registradas para a validação e os campos da interface."""
     return tuple(ALGORITHMS)
 
 
+# Põe o nome em maiúsculas e confere se o algoritmo existe.
 def normalize_algorithm(name):
-    """Normaliza caixa e espaços usando o mesmo registro em todas as entradas."""
     name = str(name).strip().upper()
     if name not in ALGORITHMS:
         raise ValueError("Algoritmo inválido. Digite " + " ou ".join(ALGORITHMS) + ".")
     return name
 
 
+# Busca o algoritmo na tabela pelo nome.
 def get_algorithm(name):
-    """Obtém a política registrada, com erro explícito para uma abreviação desconhecida."""
     return ALGORITHMS[normalize_algorithm(name)]
+
 
 # Sorteios feitos na rodada atual: lista de pares (vencedora, perdedora).
 # É como um vetor global em C: o simulador esvazia a lista a cada escalonamento
 # e depois a consulta para mostrar o evento "sorteio" no gráfico de Gantt.
 draws = []
 
+# Último desempate: sorteia uma das duas e guarda o par em "draws".
 def sort_tie(t1, t2, rng=None):
-    """Realiza o último desempate e registra o par para desenhar somente sorteios efetivos."""
     winner = (rng if rng is not None else random).choice([t1, t2])
     loser = t2 if winner is t1 else t1
     draws.append((winner, loser))
     return winner
 
-# Desempate
+# Desempate: usado quando duas tarefas têm a mesma nota no algoritmo.
 def break_tie(t1, t2, rng=None):
     # 1. Tarefa que já está em execução no processador
-    """Evita troca para a própria tarefa antes de comparar prazo, ingresso e duração."""
     has_proc1 = 1 if t1.processor else 0
     has_proc2 = 1 if t2.processor else 0
 
@@ -98,21 +105,9 @@ def break_tie(t1, t2, rng=None):
     return sort_tie(t1, t2, rng)
 
 
-# Rate Monotonic: ganha quem tem o menor período
-def compare_tasks_rm(t1, t2, rng=None):
-    """Mantém a API RM, delegando sua prioridade ao registro central."""
-    return get_algorithm('RM').compare(t1, t2, rng)
-
-
-# Earliest Deadline First: ganha quem tem o prazo absoluto mais próximo
-# (absolute_deadline = instante em que a instância atual precisa terminar)
-def compare_tasks_edf(t1, t2, rng=None):
-    """Mantém a API EDF, delegando sua prioridade ao registro central."""
-    return get_algorithm('EDF').compare(t1, t2, rng)
-
-
+# Escolhe, entre as candidatas, a tarefa que deve executar segundo o algoritmo.
+# Não mexe nas filas: quem aplica a troca é o simulador.
 def choose_task(tasks, algorithm, rng=None, state=None):
-    """Seleciona uma candidata sem alterar as filas; a aplicação das trocas fica no núcleo."""
     if not tasks:
         return None
 
@@ -131,6 +126,9 @@ def choose_task(tasks, algorithm, rng=None, state=None):
     return chosen
 
 
-# Único ponto de definição das políticas concretas. Menor chave = maior prioridade.
+# Algoritmos disponíveis. Menor nota = maior prioridade.
+#   RM:  ganha quem tem o menor período
+#   EDF: ganha quem tem o prazo absoluto mais próximo
+# Para incluir outro algoritmo, basta acrescentar uma linha aqui.
 register_algorithm('RM', lambda task: task.period)
 register_algorithm('EDF', lambda task: task.absolute_deadline)

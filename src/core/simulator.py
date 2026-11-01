@@ -5,199 +5,267 @@ from choose_task import choose_task, draws, get_algorithm, normalize_algorithm
 from copy import deepcopy
 import random
 
-from simulation_state import simulation_state, positive_integer, validate_changes
+from TCB import NEW, READY, RUNNING, SUSPENDED, FINISHED
+from simulation_state import simulation_state
+from state_editor import edit_state
+from task_fields import positive_integer, validate_changes
 from simulation_result import Event, TaskInfo, SimulationResult, SIMULATION_LIMIT
 
 
-# state_list[t] guarda o estado no instante t; o último é o estado atual.
-state_list = []
-
 # Lê o arquivo de configuração e confere se o sistema é válido.
-# Em caso de erro, imprime o motivo e chama exit(1) (como nas outras funções de leitura).
-def load_system(file_path):
-    """Carrega entradas validadas; o núcleo não impõe restrições temporais além do formato."""
-    algorithm, quantum, num_cpus = extract_system_parameters(file_path)
-    task_list = extract_task_list(file_path)
+# Avisos e notas vão para o log (lista de textos). Em caso de erro, levanta ValueError.
+def load_system(file_path, log):
+    algorithm, quantum, num_cpus = extract_system_parameters(file_path, log)
+    task_list = extract_task_list(file_path, log)
 
-    print(f"algorithm {algorithm}")
-    print(f"quantum {quantum}")
-    print(f"num_cpus {num_cpus}")
+    log.append(f"algorithm {algorithm}")
+    log.append(f"quantum {quantum}")
+    log.append(f"num_cpus {num_cpus}")
 
     return algorithm, quantum, num_cpus, task_list
 
 
-# Inicia um histórico novo, sem alterar as tarefas recebidas.
+# Confere uma tarefa antes de iniciar a simulação (a lista recebida não é alterada).
+def check_task(task, seen_ids, seen_colors):
+    if task.id in seen_ids or task.color in seen_colors:
+        raise ValueError('Identificadores e cores precisam ser exclusivos por tarefa.')
+    if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0 or task.id <= 0:
+        raise ValueError('A definição periódica contém um tempo ou identificador inválido.')
+
+
+# Cria o estado do tick 0, com cópias das tarefas e uma CPU por identificador.
 def start_simulation(algorithm, num_cpus, task_list):
-    """Inicia um histórico independente com TCBs copiados e uma CPU por identificador."""
     algorithm = normalize_algorithm(algorithm)
     num_cpus = positive_integer(num_cpus, 'Número de processadores')
     tasks = deepcopy(task_list)
-    ids, colors = set(), set()
+
+    seen_ids = set()
+    seen_colors = set()
     for task in tasks:
+        # validate_changes normaliza os campos (ex.: cor em maiúsculas)
         for field, value in validate_changes(task, {}).items():
             setattr(task, field, value)
-        if task.id in ids or task.color in colors:
-            raise ValueError('Identificadores e cores precisam ser exclusivos por tarefa.')
-        if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0 or task.id <= 0:
-            raise ValueError('A definição periódica contém um tempo ou identificador inválido.')
-        ids.add(task.id)
-        colors.add(task.color)
+        check_task(task, seen_ids, seen_colors)
+        seen_ids.add(task.id)
+        seen_colors.add(task.color)
+
     result = SimulationResult(algorithm, num_cpus, [TaskInfo(task) for task in tasks])
     initial_state = simulation_state(
         algorithm=algorithm,
         processors_list=initialize_processors(num_cpus),
-        tasks_to_arrival=tasks,
+        tasks=tasks,
         result=result,
     )
-    # Preserva a referência da lista compartilhada com a interface.
-    state_list.clear()
-    state_list.append(initial_state)
     return initial_state
 
 
-# Executa a mesma transição usada pelo modo passo a passo.
-def run_simulation(algorithm, num_cpus, task_list):
-    """Reutiliza as transições do debugger até concluir todas as instâncias."""
-    current_state = start_simulation(algorithm, num_cpus, task_list)
-    while not current_state.is_finished:
-        current_state = scale(current_state)
-        state_list.append(current_state)
-    return current_state.result
+# ---------- Etapas de um tick ----------
+
+# Passo 1: tarefas Novas cuja chegada já aconteceu passam para Pronta (ou Suspensa)
+# e já agendam a próxima instância.
+def release_arrivals(state):
+    while True:
+        arrived = [task for task in state.tasks_in(NEW) if task.arrival <= state.tick]
+        if len(arrived) == 0:
+            break
+        for task in arrived:
+            if task.starts_suspended:
+                state.change_state(task, SUSPENDED)
+            else:
+                state.change_state(task, READY)
+                state.reschedule_needed = True
+            state.result.events.append(Event("arrival", state.tick, task.id, task.instance_number))
+            state.enqueue_next_instance(task)
+            state.log.append(f"Task {task.id}({task.instance_number}) has arrived at tick {state.tick}.")
 
 
-def _schedule(state):
-    """Escolhe as instâncias executáveis e aplica somente as trocas necessárias."""
-    print(f"A specific event triggered the scheduler in tick {state.tick}.")
-    ready_queue = state.ready_queue
-    running_tasks = state.running_tasks
-    previously_running = tuple(running_tasks)
-    candidates = ready_queue + running_tasks
-    selected = []
+# Passo 2: marca (uma única vez) as instâncias que passaram do prazo.
+# Estar atrasada é um evento: a tarefa continua na fila e pode terminar depois.
+def check_deadlines(state):
+    active_tasks = state.tasks_in(READY) + state.tasks_in(RUNNING) + state.tasks_in(SUSPENDED)
+    for task in active_tasks:
+        if task.absolute_deadline <= state.tick and not task.is_late:
+            state.log.append(f"SCHEADULING ERROR: Task {task.id}({task.instance_number}) has not completed its execution within its deadline at tick {state.tick}.")
+            state.result.events.append(Event("deadline_miss", state.tick, task.id, task.instance_number))
+            task.is_late = True
+
+
+# Passo 3: só chama o algoritmo quando houve um evento que pode mudar a decisão
+# (chegada, CPU liberada, edição). Passar o relógio, sozinho, não reescalona.
+def schedule_if_needed(state):
+    policy = get_algorithm(state.algorithm)
+    if policy.tick_event is not None and policy.tick_event(state):
+        state.reschedule_needed = True
+    if state.reschedule_needed:
+        state.reschedule_needed = False
+        if len(state.tasks_in(READY)) > 0:
+            schedule(state)
+
+
+# Escolhe as instâncias que devem executar (uma por CPU, no máximo) e aplica as trocas.
+def schedule(state):
+    state.log.append(f"A specific event triggered the scheduler in tick {state.tick}.")
+    previously_running = tuple(state.tasks_in(RUNNING))
+    candidates = state.tasks_in(READY) + state.tasks_in(RUNNING)
+
+    # O gerador de números aleatórios faz parte do estado: voltar e avançar
+    # de novo repete exatamente os mesmos sorteios.
     rng = random.Random()
     rng.setstate(state.random_state)
     draws.clear()
 
-    for _ in range(min(len(state.processors_list), len(candidates))):
+    selected = []
+    vacancies = min(len(state.processors_list), len(candidates))
+    for i in range(vacancies):
         chosen = choose_task(candidates, state.algorithm, rng, state)
         candidates.remove(chosen)
         selected.append(chosen)
-
-    selected_set = set(selected)
-    for winner, loser in draws:
-        if winner in selected_set and loser not in selected_set and winner not in previously_running:
-            state.result.events.append(Event("draw", state.tick, winner.id, winner.instance_number))
     state.random_state = rng.getstate()
 
-    # Mesmo após uma chegada, a seleção pode continuar igual. Nesse caso não
-    # reconstruímos/reordenamos as filas nem refazemos a associação com as CPUs.
-    if selected_set == set(previously_running):
+    record_draws(state, selected, previously_running)
+
+    # Se a escolha é a mesma de antes, não mexe nas filas nem nas CPUs.
+    if set(selected) == set(previously_running):
         return
+    apply_selection(state, selected, previously_running)
+
+
+# Registra o evento "sorteio" quando o sorteio colocou uma tarefa nova para executar.
+def record_draws(state, selected, previously_running):
+    for winner, loser in draws:
+        if winner in selected and loser not in selected and winner not in previously_running:
+            state.result.events.append(Event("draw", state.tick, winner.id, winner.instance_number))
+
+
+# Tira da CPU quem perdeu a vaga, coloca para executar quem ganhou e liga tarefas às CPUs.
+def apply_selection(state, selected, previously_running):
     for task in previously_running:
-        if task not in selected_set:
-            running_tasks.remove(task)
-            ready_queue.append(task)
-            task.processor.task_running = None
-            task.processor = None
+        if task not in selected:
+            state.change_state(task, READY)
     for task in selected:
         if task not in previously_running:
-            ready_queue.remove(task)
-            running_tasks.append(task)
-    pair_cpus_tasks(running_tasks, state.processors_list)
+            state.change_state(task, RUNNING)
+    pair_cpus_tasks(state.tasks_in(RUNNING), state.processors_list)
 
 
-# Constrói o próximo estado sem modificar o estado recebido nem o histórico.
-def scale(current_state):
-    """Processa eventos e executa um intervalo, preservando o estado recebido."""
-    if current_state.is_finished:
-        return current_state
-
-    # Uma única cópia preserva os vínculos entre tarefas, filas e processadores,
-    # inclusive as referências circulares tarefa.processor / cpu.task_running.
-    current_state = deepcopy(current_state)
-    result = current_state.result
-
-    tick = current_state.tick
-    tasks_to_arrival = current_state.tasks_to_arrival
-    ready_queue = current_state.ready_queue
-    running_tasks = current_state.running_tasks
-    terminated_tasks = current_state.terminated_tasks
-    processors_list = current_state.processors_list
-
-    print(f"==================== TICK: {tick} ===================")
-
-    # O calendário libera instâncias por período, mesmo se a antecessora ainda
-    # executa. A sucessora é agendada na admissão, nunca no término ou no prazo.
-    while True:
-        arrived = [task for task in tasks_to_arrival if task.arrival <= tick]
-        if not arrived:
-            break
-        for task in arrived:
-            tasks_to_arrival.remove(task)
-            if task.release_state == 'Suspensa':
-                current_state.suspended_tasks.append(task)
-            else:
-                ready_queue.append(task)
-                current_state.reschedule_needed = True
-            result.events.append(Event("arrival", tick, task.id, task.instance_number))
-            current_state.enqueue_next_instance(task)
-            print(f"Task {task.id}({task.instance_number}) has arrived at tick {tick}.")
-
-    # O prazo é independente do período. Atraso é um evento, não uma conclusão.
-    active_tasks = ready_queue + running_tasks + current_state.suspended_tasks
-
-    for task in active_tasks:
-        # Uma edição pode aproximar o prazo de uma instância já admitida.
-        if task.absolute_deadline <= tick and not task.is_late:
-            print(f"SCHEADULING ERROR: Task {task.id}({task.instance_number}) has not completed its execution within its deadline at tick {tick}.")
-            result.events.append(Event("deadline_miss", tick, task.id, task.instance_number))
-            task.is_late = True
-
-    # Req. 1.1: verificar eventos a cada tick; RM/EDF só precisam de uma nova
-    # decisão quando há admissão, liberação de CPU ou uma edição relevante.
-    # Conclusões em t e chegadas em t são reunidas antes de executar [t, t+1).
-    policy = get_algorithm(current_state.algorithm)
-    # Políticas futuras podem registrar evento de quantum. RM/EDF não possuem
-    # esse callback e não são reavaliados por simples passagem do relógio.
-    if policy.tick_event is not None and policy.tick_event(current_state):
-        current_state.reschedule_needed = True
-    if current_state.reschedule_needed:
-        current_state.reschedule_needed = False
-        if ready_queue:
-            _schedule(current_state)
-
-    tick_row = []   # o que cada CPU fez neste tick
-
-    for cpu in processors_list:
-        if cpu.task_running == None:
+# Passo 4: cada CPU executa 1 tick. Devolve o que cada CPU fez (None = CPU parada).
+def execute_tick(state):
+    tick_row = []
+    for cpu in state.processors_list:
+        if cpu.task_running is None:
             tick_row.append(None)
-            print(f"Processor: {cpu.id}: No task is running at tick {tick} -> {tick + 1}.")
+            state.log.append(f"Processor: {cpu.id}: No task is running at tick {state.tick} -> {state.tick + 1}.")
             continue
 
         task = cpu.task_running
         tick_row.append((task.id, task.instance_number))
-        print(f"Processor {cpu.id}: Task {task.id}({task.instance_number}) is running at tick {tick} -> {tick + 1}.")
+        state.log.append(f"Processor {cpu.id}: Task {task.id}({task.instance_number}) is running at tick {state.tick} -> {state.tick + 1}.")
         task.computational_time += 1
 
         if task.computational_time >= task.duration:
-            result.events.append(Event("finish", tick + 1, task.id, task.instance_number))
-            task.processor = None
-            cpu.task_running = None
-            running_tasks.remove(task)
-            terminated_tasks.append(task)
-            if ready_queue:
-                current_state.reschedule_needed = True
-            if task.instance_number == SIMULATION_LIMIT:
-                print(f"Task {task.id}({task.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {tick} -> {tick + 1}.")
+            finish_task(state, task)
+    return tick_row
 
+
+# Termina uma instância: o estado vira FINISHED e a CPU é liberada.
+def finish_task(state, task):
+    state.result.events.append(Event("finish", state.tick + 1, task.id, task.instance_number))
+    state.change_state(task, FINISHED)
+    if len(state.tasks_in(READY)) > 0:
+        state.reschedule_needed = True
+    if task.instance_number == SIMULATION_LIMIT:
+        state.log.append(f"Task {task.id}({task.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {state.tick} -> {state.tick + 1}.")
+
+
+# Constrói o próximo estado (tick + 1) sem modificar o estado recebido nem o histórico.
+def scale(current_state):
+    if current_state.is_finished:
+        return current_state
+
+    # Uma única cópia preserva os vínculos entre tarefas, filas e processadores
+    # (tarefa.processor e cpu.task_running apontam um para o outro).
+    state = deepcopy(current_state)
+    result = state.result
+
+    state.log.append(f"==================== TICK: {state.tick} ===================")
+
+    release_arrivals(state)
+    check_deadlines(state)
+    schedule_if_needed(state)
+    tick_row = execute_tick(state)
+
+    # Registra o que aconteceu neste tick para o gráfico de Gantt
     result.timeline.append(tick_row)
     result.suspended_timeline.append([(task.id, task.instance_number)
-                                      for task in current_state.suspended_tasks])
-    result.task_colors.append({info.id: info.color for info in result.tasks})
-    current_state.tick = tick + 1
-    current_state.tasks_to_arrival = tasks_to_arrival
-    current_state.ready_queue = ready_queue
-    current_state.running_tasks = running_tasks
-    current_state.terminated_tasks = terminated_tasks
-    result.total_ticks = current_state.tick
-    current_state.refresh_result()
-    return current_state
+                                      for task in state.tasks_in(SUSPENDED)])
+    state.tick = state.tick + 1
+    result.total_ticks = state.tick
+    state.refresh_result()
+    return state
+
+
+# Guarda o histórico da simulação e é a única interface usada pela janela e pelo console.
+#
+#   history[t] é o estado no tick t; o último é o estado atual
+#   (parecido com um vetor de structs em C, uma cópia por tick).
+#
+# Avançar calcula um novo estado e o acrescenta ao fim; voltar descarta o último.
+# Voltar e avançar de novo dá o mesmo resultado, porque o estado guarda também o gerador
+# de números aleatórios (os sorteios de desempate se repetem).
+class Simulator:
+    def __init__(self):
+        self.history = []
+
+    # Esquece a simulação carregada.
+    def reset(self):
+        self.history = []
+
+    # Diz se já existe uma configuração carregada.
+    def is_loaded(self):
+        return len(self.history) > 0
+
+    # Estado atual (o último do histórico).
+    def current(self):
+        return self.history[-1]
+
+    # Lê o arquivo de configuração e cria o estado do tick 0.
+    # Em caso de erro, levanta ValueError com o log e o motivo do erro.
+    def load(self, file_path):
+        log = []
+        try:
+            algorithm, quantum, num_cpus, task_list = load_system(file_path, log)
+            state = start_simulation(algorithm, num_cpus, task_list)
+        except ValueError as error:
+            self.history = []
+            raise ValueError("\n".join(log + [str(error)]))
+        state.log = log
+        self.history = [state]
+
+    # Simula mais um tick (não faz nada se a simulação já terminou). Devolve o novo estado atual.
+    def step_forward(self):
+        if not self.current().is_finished:
+            self.history.append(scale(self.current()))
+        return self.current()
+
+    # Diz se existe um tick anterior para onde voltar.
+    def can_step_back(self):
+        return len(self.history) > 1
+
+    # Descarta o último tick e devolve o estado anterior, sem recalculá-lo.
+    def step_back(self):
+        if self.can_step_back():
+            self.history.pop()
+        return self.current()
+
+    # Avança até a simulação terminar (ou parar numa suspensão manual que só o usuário retoma).
+    def run_to_end(self):
+        while not self.current().is_finished and not self.current().is_blocked:
+            self.step_forward()
+        return self.current()
+
+    # Aplica uma edição (ver state_editor.edit_state) ao estado atual.
+    # Se for inválida, levanta ValueError e nada muda. Editar não cria um tick novo.
+    def edit(self, **changes):
+        edited = edit_state(self.current(), **changes)
+        self.history[-1] = edited
+        return edited
