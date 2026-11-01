@@ -9,37 +9,37 @@ DEFAULT_ALGORITHM = 'RM'
 DEFAULT_QUANTUM = 1
 DEFAULT_NUM_CPUS = 1
 
+# Erro no arquivo de configuração. A mensagem diz o motivo do problema.
+# (Levantar um erro é parecido com imprimir a mensagem e chamar exit() em C,
+# mas quem chamou decide o que fazer: o terminal imprime, a janela mostra um aviso.)
+class ConfigError(ValueError):
+    pass
+
+
+# Lê o arquivo e devolve as linhas que não estão em branco.
 def get_valid_lines(file_path):
-    """Ignora espaço e linhas vazias e converte falhas de leitura em diagnósticos."""
     if not os.path.exists(file_path):
-        print(f"Error: The file '{file_path}' was not found.")
-        exit(1)
+        raise ConfigError(f"Error: The file '{file_path}' was not found.")
     try:
         with open(file_path, 'r', encoding='utf-8-sig') as file:
             lines = file.readlines()
-            
-        valid_lines = [line.strip() for line in lines if line.strip()]
-        
-        if len(valid_lines) < 2:
-            print("Error: The file must contain at least two lines.")
-            exit(1)
-
-        return valid_lines
-    
     except Exception as e:
-        print(f"Error reading the file: {e}")
-        exit(1)
+        raise ConfigError(f"Error reading the file: {e}")
 
-def extract_system_parameters(file_path):
+    valid_lines = [line.strip() for line in lines if line.strip()]
+    if len(valid_lines) < 2:
+        raise ConfigError("Error: The file must contain at least two lines.")
+    return valid_lines
 
-    """Lê algoritmo, quantum e CPUs, validando antes de construir a simulação."""
+
+# Lê algoritmo, quantum e CPUs da primeira linha, aplicando os valores padrão
+# aos que faltam. Avisos são acrescentados ao log. Devolve (algoritmo, quantum, num_cpus).
+def extract_system_parameters(file_path, log):
     valid_lines = get_valid_lines(file_path)
 
     system_line = valid_lines[0].rstrip(';').split(';')
-    
     if len(system_line) > 3:
-        print("Error: The first line is poorly formatted.")
-        exit(1)
+        raise ConfigError("Error: The first line is poorly formatted.")
 
     # Parâmetros que faltam na primeira linha recebem o valor padrão (item 3.2 do PDF)
     while len(system_line) < 3:
@@ -48,71 +48,64 @@ def extract_system_parameters(file_path):
     algorithm_str = system_line[0].strip()
     if algorithm_str == "":
         algorithm_str = DEFAULT_ALGORITHM
-        print(f"Notice: algorithm not informed. Using the default: {DEFAULT_ALGORITHM}.")
+        log.append(f"Notice: algorithm not informed. Using the default: {DEFAULT_ALGORITHM}.")
     try:
         algorithm = normalize_algorithm(algorithm_str)
     except ValueError as error:
-        print(f"Error: {error}")
-        exit(1)
+        raise ConfigError(f"Error: {error}")
 
     quantum_str = system_line[1].strip()
     num_cpus_str = system_line[2].strip()
     if quantum_str == "":
         quantum_str = str(DEFAULT_QUANTUM)
-        print(f"Notice: quantum not informed. Using the default: {DEFAULT_QUANTUM}.")
+        log.append(f"Notice: quantum not informed. Using the default: {DEFAULT_QUANTUM}.")
     if num_cpus_str == "":
         num_cpus_str = str(DEFAULT_NUM_CPUS)
-        print(f"Notice: number of CPUs not informed. Using the default: {DEFAULT_NUM_CPUS}.")
+        log.append(f"Notice: number of CPUs not informed. Using the default: {DEFAULT_NUM_CPUS}.")
 
-    # Validation for System Parameters
     try:
         quantum = int(quantum_str)
-        if quantum < 1:
-            print("Error: Quantum must be at least 1.")
-            exit(1)
         num_cpus = int(num_cpus_str)
-        if num_cpus < 1:
-            print("Error: Number of CPUs must be at least 1.")
-            exit(1)
     except ValueError:
-        print("Error: All the parameters must be integers.")
-        exit(1)
-    
-    print("=== SYSTEM PARAMETERS ===")
-    print(f"Scheduling Algorithm: {algorithm}")
-    print(f"Quantum: {quantum}")
-    print(f"Number of CPUs: {num_cpus}\n")
+        raise ConfigError("Error: All the parameters must be integers.")
+    if quantum < 1:
+        raise ConfigError("Error: Quantum must be at least 1.")
+    if num_cpus < 1:
+        raise ConfigError("Error: Number of CPUs must be at least 1.")
+
+    log.append("=== SYSTEM PARAMETERS ===")
+    log.append(f"Scheduling Algorithm: {algorithm}")
+    log.append(f"Quantum: {quantum}")
+    log.append(f"Number of CPUs: {num_cpus}\n")
 
     return algorithm, quantum, num_cpus
-    
 
-def extract_task_list(file_path):
-    
-    """Constrói TCBs validados, preservando IDs/cores únicos e ignorando aperiódicas."""
-    valid_lines = get_valid_lines(file_path)    
+
+# Lê as tarefas (da segunda linha em diante). Aperiódicas são ignoradas com um aviso.
+# Devolve a lista de TCBs; avisos e erros de linha vão para o log.
+def extract_task_list(file_path, log):
+    valid_lines = get_valid_lines(file_path)
 
     task_list = []
     seen_ids = set()
     seen_colors = set()
 
-    print("=== TASK LIST ===")
+    log.append("=== TASK LIST ===")
     for i in range(1, len(valid_lines)):
         task_line = valid_lines[i].rstrip(';').split(';')
-        if task_is_valid(task_line, i, seen_ids, seen_colors):
-            task = TCB.TCB(task_line)
-            task.color = task.color.upper()
-            if task.period == 0:
-                print(f"Warning: Line {i+1} ignored. Task ID {task.id} is aperiodic (period=0) and not supported yet.")
-                continue
-            task_list.append(task)
-            task.print()
-        else:
-            print(f"Error: Invalid parameters in line {i+1}.")
-            exit(1)
+        if not task_is_valid(task_line, i, log, seen_ids, seen_colors):
+            raise ConfigError(f"Error: Invalid parameters in line {i+1}.")
+
+        task = TCB.TCB(task_line)
+        task.color = task.color.upper()
+        if task.period == 0:
+            log.append(f"Warning: Line {i+1} ignored. Task ID {task.id} is aperiodic (period=0) and not supported yet.")
+            continue
+        task_list.append(task)
+        log.append(str(task))
 
     # Sem tarefas periódicas não há o que simular (as aperiódicas foram ignoradas)
     if len(task_list) == 0:
-        print("Error: No periodic tasks to simulate. Aperiodic tasks (period=0) are not supported yet.")
-        exit(1)
+        raise ConfigError("Error: No periodic tasks to simulate. Aperiodic tasks (period=0) are not supported yet.")
 
     return task_list
