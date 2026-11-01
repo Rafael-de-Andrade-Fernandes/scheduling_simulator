@@ -144,6 +144,8 @@ def edit_task(state, task_id, changes, task_state):
     if not siblings:
         siblings = [task]
     arrival_changed = values['arrival'] != task.arrival
+    if arrival_changed and values['arrival'] < state.tick:
+        raise ValueError("O ingresso não pode ser anterior ao instante atual.")
     if arrival_changed and any(other.state != NEW for other in siblings):
         raise ValueError("O ingresso de uma instância dessa tarefa já ocorreu. Retroceda até todas estarem Novas para alterá-lo.")
 
