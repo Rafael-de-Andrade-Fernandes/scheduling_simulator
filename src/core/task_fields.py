@@ -1,13 +1,12 @@
 """Conversão e validação dos campos editáveis de uma tarefa."""
 import ast
-from copy import deepcopy
 import re
+from copy import deepcopy
 
 # Campos de uma tarefa que o usuário pode alterar (o ID não muda nunca)
 TASK_FIELDS = ("color", "arrival", "duration", "period", "deadline", "events")
 
 
-# Converte um campo numérico e informa sua unidade/limite na mensagem de erro.
 def positive_integer(value, name, minimum=1):
     try:
         number = int(str(value).strip())
@@ -18,12 +17,11 @@ def positive_integer(value, name, minimum=1):
     return number
 
 
-# Normaliza atributos de tarefas sem impor igualdade entre prazo e período.
-# Devolve um dicionário com todos os campos de TASK_FIELDS: os valores de "changes"
-# onde existirem e os valores atuais da tarefa nos demais. Levanta ValueError se algo for inválido.
 def validate_changes(task, changes):
+    """Valida o conjunto completo de atributos sem modificar o TCB recebido."""
     if any(key not in TASK_FIELDS for key in changes):
         raise ValueError("A edição contém um campo de tarefa desconhecido.")
+    # Eventos são mutáveis; a edição não pode compartilhar sua lista com o passado.
     values = {key: deepcopy(changes.get(key, getattr(task, key))) for key in TASK_FIELDS}
 
     values["color"] = str(values["color"]).strip().removeprefix("#").upper()

@@ -3,12 +3,12 @@ import ast
 import re
 
 
-# Valida uma lista de textos por literal seguro, sem executar seus conteúdos.
 def validate_events_field(events_str, line_idx, log):
     if not events_str:
         return True
 
     try:
+        # O arquivo é dado de entrada, nunca código Python a ser executado.
         parsed_events = ast.literal_eval(events_str)
     except (ValueError, SyntaxError):
         log.append(f"Warning: Line {line_idx} ignored. "
@@ -27,21 +27,17 @@ def validate_events_field(events_str, line_idx, log):
     return True
 
 
-# Verifica campos, identificadores e cores antes de aceitar uma definição.
-# Os avisos e erros encontrados são acrescentados ao log (lista de textos).
 def task_is_valid(task_line, i, log, seen_ids=None, seen_colors=None):
+    """Valida uma linha e acrescenta ao log o motivo de eventual rejeição."""
     line_idx = i + 1
 
-    # 1. Checagem de quantidade de colunas
     if len(task_line) not in (6, 7):
         log.append(f"Warning: Line {line_idx} doesn't have the correct number of parameters. Invalid format.")
         return False
 
-    # Remove espacos em branco das extremidades de todos os campos de uma so vez
     fields = [field.strip() for field in task_line]
     t_id_str, t_color, t_arr_str, t_dur_str, t_per_str, t_dl_str = fields[:6]
 
-    # 2. Conversão e validação dos campos inteiros
     try:
         t_id = int(t_id_str)
         t_arrival = int(t_arr_str)
@@ -53,20 +49,18 @@ def task_is_valid(task_line, i, log, seen_ids=None, seen_colors=None):
                    "All numeric parameters must be valid integers.")
         return False
 
-    # Regras de limite: id, duration e deadline > 0; arrival e period >= 0
+    # O período zero é válido no arquivo: a etapa de carga o ignora com aviso.
     if t_id <= 0 or t_duration <= 0 or t_deadline <= 0 or t_arrival < 0 or t_period < 0:
         log.append(f"Warning: Line {line_idx} has invalid numeric parameters. "
                    "id, duration and deadline must be > 0; arrival and period must be >= 0.")
         return False
 
-    # task_validation.py:58-61
     if seen_ids is not None:
         if t_id in seen_ids:
             log.append(f"Warning: Line {line_idx} ignored. Task ID {t_id} is duplicated.")
             return False
         seen_ids.add(t_id)
 
-    # 3. Validação da cor em hexadecimal (6 caracteres)
     if not re.match(r'^[0-9a-fA-F]{6}$', t_color):
         log.append(f"Warning: Line {line_idx} ignored. Color '{t_color}' is not a valid hex format.")
         return False
@@ -79,7 +73,6 @@ def task_is_valid(task_line, i, log, seen_ids=None, seen_colors=None):
             return False
         seen_colors.add(normalized_color)
 
-    # 4. Validação do campo opcional de eventos (se fornecido)
     if len(fields) == 7:
         events_str = fields[6]
         if not validate_events_field(events_str, line_idx, log):

@@ -1,14 +1,7 @@
 """Entrada CLI/GUI e adaptação de caminhos para código-fonte e distribuição autônoma."""
-# Ponto de entrada do simulador.
-#
 # Uso:
-#   python3 src/main.py [arquivo_de_configuracao]              abre a janela
-#   python3 src/main.py [arquivo_de_configuracao] --console    roda sem janela e salva o SVG
-#
-# O programa tem duas partes separadas:
-#   core/  a simulação (não sabe nada de janelas nem de desenho)
-#   gui/   a janela e o gráfico de Gantt (não sabe nada de como a simulação funciona)
-# Este arquivo só liga uma parte na outra.
+#   python -B src/main.py [arquivo_de_configuracao]              abre a janela
+#   python -B src/main.py [arquivo_de_configuracao] --console    roda sem janela e salva o SVG
 
 import argparse
 import os
@@ -17,8 +10,8 @@ import sys
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 
-# Os arquivos de core/ importam uns aos outros pelo nome simples (import TCB, ...).
-# Esta linha é parecida com o -I do gcc: diz ao Python em qual pasta procurá-los.
+# O script pode ser iniciado de outro diretório. Os módulos do núcleo usam
+# imports diretos entre si, por isso o caminho precisa partir deste arquivo.
 sys.path.insert(0, os.path.join(SRC_DIR, 'core'))
 
 from simulator import Simulator
@@ -27,8 +20,6 @@ from gui.gantt import build_gantt
 from gui.svg_export import save_svg
 
 
-# Descobre o arquivo de configuração padrão e a pasta de saída.
-# Devolve (config_padrão, pasta_de_saída).
 def default_paths():
     config = os.path.join(BASE_DIR, 'configs', 'config.txt')
     output = os.path.join(BASE_DIR, 'output')
@@ -45,14 +36,13 @@ def default_paths():
     return config, output
 
 
-# Modo sem janela: executa tudo, imprime o log, gera o SVG e termina.
 def run_console(file_path, output_dir):
     engine = Simulator()
     try:
         engine.load(file_path)
     except ValueError as error:
         print(error)
-        exit(1)
+        raise SystemExit(1)
 
     state = engine.run_to_end()
     print("\n".join(state.log))
@@ -64,7 +54,6 @@ def run_console(file_path, output_dir):
     print(f"Imagem salva em: {image_path}")
 
 
-# A mesma entrada funciona a partir do código-fonte e da distribuição Windows.
 def main(argv=None):
     default_config, default_output = default_paths()
 

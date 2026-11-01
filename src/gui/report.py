@@ -1,8 +1,4 @@
 """Relatórios de execução derivados exclusivamente dos resultados históricos."""
-# Monta o texto de resumo mostrado ao usuário: períodos em que cada processador
-# ficou desligado e lista de perdas de prazo. Só lê o resultado da simulação.
-
-# Resume configuração, períodos OFF e perdas de prazo sem alterar o resultado.
 def make_report(result):
     lines = []
     lines.append(f"Algoritmo: {result.algorithm} | Processadores: {result.num_cpus} | Duração: {result.total_ticks} ticks")
@@ -11,16 +7,12 @@ def make_report(result):
     lines.append("Processadores desligados (OFF):")
     for cpu in range(result.max_cpus):
         periods = find_off_periods(result, cpu)
-        if len(periods) == 0:
+        if not periods:
             lines.append(f"  CPU {cpu + 1}: sem intervalos OFF registrados")
         else:
-            text = ""
-            for period in periods:
-                text += f"[{period[0]}, {period[1]}) "
-            total = 0
-            for period in periods:
-                total += period[1] - period[0]
-            lines.append(f"  CPU {cpu + 1}: {text.strip()}  (total: {total} ticks)")
+            text = " ".join(f"[{start}, {end})" for start, end in periods)
+            total = sum(end - start for start, end in periods)
+            lines.append(f"  CPU {cpu + 1}: {text}  (total: {total} ticks)")
     lines.append("")
 
     lines.append("Perdas de prazo:")
@@ -35,9 +27,8 @@ def make_report(result):
     return "\n".join(lines)
 
 
-# Devolve a lista de pares (inicio, fim) dos períodos em que a CPU ficou sem tarefa.
-# O intervalo é aberto no fim: [2, 5) quer dizer ticks 2, 3 e 4.
 def find_off_periods(result, cpu):
+    """Retorna intervalos [início, fim), excluindo ticks em que a CPU não existia."""
     periods = []
     tick = 0
     while tick < result.total_ticks:
@@ -52,8 +43,6 @@ def find_off_periods(result, cpu):
     return periods
 
 
-# Situação de uma tarefa ao final da simulação, calculada a partir do resultado.
-# Devolve uma lista de pares (nome, valor) para mostrar no menu lateral.
 def make_task_status(result, task_id):
     arrivals = 0
     finishes = 0
@@ -69,19 +58,17 @@ def make_task_status(result, task_id):
             misses += 1
 
     executed_ticks = 0
-    cpus_used = []
-    for tick in range(result.total_ticks):
-        for cpu, running in enumerate(result.timeline[tick]):
+    cpus_used = set()
+    for row in result.timeline:
+        for cpu, running in enumerate(row):
             if running is not None and running[0] == task_id:
                 executed_ticks += 1
-                if (cpu + 1) not in cpus_used:
-                    cpus_used.append(cpu + 1)
-    cpus_used.sort()
+                cpus_used.add(cpu + 1)
 
-    status = []
-    status.append(("Instâncias que chegaram", str(arrivals)))
-    status.append(("Instâncias concluídas", str(finishes)))
-    status.append(("Perdas de prazo", str(misses)))
-    status.append(("Ticks executados", str(executed_ticks)))
-    status.append(("Processadores usados", ", ".join(str(c) for c in cpus_used) if cpus_used else "nenhum"))
-    return status
+    return [
+        ("Instâncias que chegaram", str(arrivals)),
+        ("Instâncias concluídas", str(finishes)),
+        ("Perdas de prazo", str(misses)),
+        ("Ticks executados", str(executed_ticks)),
+        ("Processadores usados", ", ".join(str(cpu) for cpu in sorted(cpus_used)) if cpus_used else "nenhum"),
+    ]

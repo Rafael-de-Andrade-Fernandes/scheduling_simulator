@@ -8,14 +8,12 @@ from gui.gantt import build_gantt
 from gui.report import make_report, make_task_status
 from gui.svg_export import save_svg
 
+# A geometria compartilhada usa as âncoras do SVG; o Canvas precisa destes nomes.
+CANVAS_ANCHORS = {"start": "w", "middle": "center", "end": "e"}
 
-# Janela principal do simulador.
-#
-# A janela recebe callbacks do main.py e o histórico compartilhado.
-# O core continua sem depender do Tkinter ou das rotinas de desenho.
 class SimulatorWindow:
+    """Apresentação e interação; o engine é responsável por estados e histórico."""
     def __init__(self, engine, config_path, output_dir):
-        # engine é o Simulator: guarda o histórico e faz avançar, voltar e editar
         self.engine = engine
         self.is_running = False
         self.after_id = None
@@ -25,7 +23,6 @@ class SimulatorWindow:
         self.shapes = []
         self.chart_width = 0
         self.chart_height = 0
-        # Resultado da última simulação e tarefa selecionada (0 = nenhuma)
         self.result = None
         self.selected_task_id = 0
         self.task_state_dirty = False
@@ -49,7 +46,6 @@ class SimulatorWindow:
 
     # ---------- Montagem da janela ----------
 
-    # Monta controles de execução e configuração com valores preenchidos pelo estado.
     def build_toolbar(self):
         toolbar = tkinter.Frame(self.root)
         toolbar.pack(side="top", fill="x", padx=6, pady=6)
@@ -90,7 +86,6 @@ class SimulatorWindow:
                                                  state="disabled")
         self.remove_task_button.pack(side="left", padx=(6, 0))
 
-    # Monta o Gantt rolável e o painel lateral sem limitar o tamanho da exportação.
     def build_canvas(self):
         middle = tkinter.Frame(self.root)
         middle.pack(side="top", fill="both", expand=True, padx=6)
@@ -117,7 +112,6 @@ class SimulatorWindow:
         traceback.print_exception(error_type, error, trace)
         messagebox.showerror('Erro no simulador', str(error))
 
-    # Menu lateral: mostra a situação e as características da tarefa clicada
     def build_side_panel(self, parent):
         outer = tkinter.Frame(parent, width=320, borderwidth=1, relief="groove")
         outer.pack(side="right", fill="y", padx=(6, 0))
@@ -186,7 +180,6 @@ class SimulatorWindow:
         self.task_state.bind("<FocusIn>", self.on_edit_focus)
         self.task_state.bind("<<ComboboxSelected>>", self.on_task_state_selected)
 
-    # Mostra relatório e log associados ao instante atualmente exibido.
     def build_text_area(self):
         frame = tkinter.Frame(self.root)
         frame.pack(side="bottom", fill="x", padx=6, pady=6)
@@ -198,9 +191,8 @@ class SimulatorWindow:
         scroll.pack(side="right", fill="y")
         self.text.pack(side="left", fill="x", expand=True)
 
-    # ---------- Ações dos botões ----------
+    # ---------- Controle da simulação ----------
 
-    # Carrega outro sistema e reinicia seu histórico a partir do instante zero.
     def on_open(self):
         if self.is_running:
             return
@@ -222,7 +214,6 @@ class SimulatorWindow:
             self.update_controls()
             self.ensure_started()
 
-    # Carrega a configuração uma única vez e exibe erros de entrada ao usuário.
     def ensure_started(self):
         if self.engine.is_loaded():
             return True
@@ -236,19 +227,20 @@ class SimulatorWindow:
         self.update_controls()
         return True
 
-    # Agenda execução automática, preservando histórico e apresentação final única.
     def on_run(self):
-        if self.is_running or not self.ensure_started() or self.engine.current().is_finished:
+        if self.is_running or not self.ensure_started():
             return
-        if self.engine.current().is_blocked:
-            self.show_message(self.state_message(self.engine.current()))
+        state = self.engine.current()
+        if state.is_finished:
+            return
+        if state.is_blocked:
+            self.show_message(self.state_message(state))
             return
         self.is_running = True
         self.update_controls()
         # Cada callback executa um tick. O Tkinter pode redesenhar entre os passos.
         self.after_id = self.root.after(0, self.run_next_step)
 
-    # Cancela o próximo callback e exibe o instante alcançado para inspeção.
     def on_pause(self):
         was_running = self.is_running
         self.is_running = False
@@ -259,22 +251,22 @@ class SimulatorWindow:
             self.draw_state(self.engine.current())
         self.update_controls()
 
-    # Pausa antes da digitação para que o desenho não sobrescreva os campos.
     def on_edit_focus(self, event=None):
         if self.is_running:
             self.on_pause()
 
-    # Executa um tick automático e agenda outro sem redesenhar o Gantt intermediário.
     def run_next_step(self):
         self.after_id = None
+        # Um callback já enfileirado ainda pode chegar depois da pausa.
         if not self.is_running:
             return
         self.advance(render=False)
         if self.is_running:
             self.after_id = self.root.after(1, self.run_next_step)
 
-    # Compartilha a transição entre os modos manual e completo, tratando término/bloqueio.
     def advance(self, render=True):
+        # A execução completa guarda todos os estados, mas só redesenha no final
+        # ou quando precisa aguardar a retomada de uma família suspensa.
         next_state = self.engine.step_forward()
         if render:
             self.draw_state(next_state)
@@ -289,21 +281,18 @@ class SimulatorWindow:
                 self.draw_state(next_state)
         self.update_controls()
 
-    # Executa um único intervalo e mostra seu resultado no modo manual.
     def on_step_forward(self):
         if self.is_running or not self.ensure_started():
             return
         if not self.engine.current().is_finished:
             self.advance()
 
-    # Descarta o futuro mais recente e volta ao retrato anterior sem recalculá-lo.
     def on_step_back(self):
         if self.is_running or not self.engine.is_loaded() or not self.engine.can_step_back():
             return
         self.draw_state(self.engine.step_back())
         self.update_controls()
 
-    # Habilita apenas operações coerentes com execução, bloqueio e limites do histórico.
     def update_controls(self):
         loaded = self.engine.is_loaded()
         finished = loaded and self.engine.current().is_finished
@@ -316,17 +305,15 @@ class SimulatorWindow:
         self.back_button.configure(state="normal" if not self.is_running and loaded and self.engine.can_step_back()
                                    else "disabled")
 
-    # Compõe o relatório e o log exclusivos do estado atual.
     def state_message(self, state):
         status = ("concluída" if state.is_finished else "aguardando retomada de tarefa suspensa"
                   if state.is_blocked else "em andamento")
         return (f"Instante atual: {state.tick} | Simulação {status}\n\n"
                 + make_report(state.result) + "\n\n--- Log da simulação ---\n" + "\n".join(state.log))
 
-    # Atualiza gráfico, seleção e campos a partir do mesmo retrato consistente.
     def draw_state(self, state):
         # Ao voltar para um instante em que a tarefa selecionada ainda não existia, tira a seleção.
-        if self.selected_task_id not in [info.id for info in state.result.tasks]:
+        if not any(info.id == self.selected_task_id for info in state.result.tasks):
             self.selected_task_id = 0
         self.result = state.result
         self.shapes, self.chart_width, self.chart_height = build_gantt(self.result)
@@ -340,7 +327,6 @@ class SimulatorWindow:
         self.root.title(f"Simulador de Escalonamento - instante {state.tick}")
         self.show_message(self.state_message(state))
 
-    # Salva a imagem final e informa falhas de gravação sem perder o estado.
     def finish_simulation(self):
         # A imagem final também é gerada quando o último tick é alcançado manualmente.
         try:
@@ -352,7 +338,7 @@ class SimulatorWindow:
             return
         self.show_message(self.state_message(self.engine.current()) + "\n\nImagem salva em: " + image_path)
 
-    # Substitui o retrato atual somente após validar toda a edição.
+    # ---------- Edição do sistema e das tarefas ----------
     def apply_edit(self, **changes):
         self.on_pause()
         if not self.ensure_started():
@@ -369,7 +355,6 @@ class SimulatorWindow:
             self.finish_simulation()
         return True
 
-    # Valores iniciais do formulário de nova tarefa: o próximo ID livre e a primeira cor não usada.
     def default_new_task(self, state):
         used_colors = {info.color for info in state.result.tasks}
         color = ""
@@ -381,7 +366,6 @@ class SimulatorWindow:
         return dict(id=max((info.id for info in state.result.tasks), default=0) + 1, color=color,
                     arrival=state.tick, duration=1, period=4, deadline=4, events="[]")
 
-    # Formulário de inclusão: a nova tarefa passa a pertencer ao retrato atual.
     def on_add_task(self):
         self.on_pause()
         if not self.ensure_started():
@@ -403,31 +387,27 @@ class SimulatorWindow:
             entry.grid(row=row, column=1, padx=12, pady=5)
             fields[key] = entry
 
-        # Inclui os campos validados e só fecha o diálogo se a edição for aceita.
         def add():
             if self.apply_edit(add_task={key: entry.get() for key, entry in fields.items()}):
                 self.select_task(int(fields['id'].get()))
                 dialog.destroy()
 
         tkinter.Button(dialog, text="Incluir tarefa", command=add).grid(row=len(labels), column=0, columnspan=2, pady=12)
-        # Referências também permitem validar o formulário com Tkinter real.
+        # Mantém o formulário acessível enquanto o diálogo está aberto.
         self.add_task_dialog = dialog
         self.add_task_fields = fields
         self.add_task_submit = add
 
-    # Cancela a definição selecionada preservando dados e desenhos históricos.
     def on_remove_task(self):
         if not self.selected_task_id:
             messagebox.showinfo("Remover tarefa", "Selecione uma tarefa no gráfico.")
             return
         self.apply_edit(remove_task_id=self.selected_task_id)
 
-    # Encaminha os campos de algoritmo e quantidade de CPUs para edição atômica.
     def on_apply_system(self):
         self.apply_edit(algorithm=self.system_entries["algorithm"].get(),
                         num_cpus=self.system_entries["num_cpus"].get())
 
-    # Aplica atributos à família; só uma escolha explícita muda o estado global.
     def on_apply_task(self):
         if not self.selected_task_id:
             messagebox.showinfo("Edição de tarefas", "Selecione uma tarefa no gráfico antes de editar.")
@@ -441,14 +421,12 @@ class SimulatorWindow:
                         changes={key: entry.get() for key, entry in self.entries.items()},
                         task_state=state_change)
 
-    # Distingue a escolha de estado de uma simples edição de atributos.
     def on_task_state_selected(self, event=None):
         selected_state = self.task_state.get()
         self.on_edit_focus(event)
         self.task_state.set(selected_state)
         self.task_state_dirty = True
 
-    # Exporta em destino escolhido e transforma falhas de I/O em aviso na interface.
     def on_save(self):
         if len(self.shapes) == 0:
             messagebox.showinfo("Salvar imagem", "Execute uma simulação antes de salvar a imagem.")
@@ -463,29 +441,26 @@ class SimulatorWindow:
 
     # ---------- Desenho ----------
 
-    # Converte cada Shape para o comando equivalente do Canvas do Tkinter
     def draw_shapes(self):
         self.canvas.delete("all")
 
-        for s in self.shapes:
-            if s.kind == "rect":
-                self.canvas.create_rectangle(s.x1, s.y1, s.x2, s.y2, fill=s.fill, outline=s.outline,
-                                             stipple="gray25" if s.pattern == "dots" else "",
-                                             tags=tags_for(s))
+        for shape in self.shapes:
+            if shape.kind == "rect":
+                self.canvas.create_rectangle(shape.x1, shape.y1, shape.x2, shape.y2, fill=shape.fill, outline=shape.outline,
+                                             stipple="gray25" if shape.pattern == "dots" else "",
+                                             tags=tags_for(shape))
 
-            elif s.kind == "line":
-                self.canvas.create_line(s.x1, s.y1, s.x2, s.y2, fill=s.outline, width=s.width)
+            elif shape.kind == "line":
+                self.canvas.create_line(shape.x1, shape.y1, shape.x2, shape.y2, fill=shape.outline, width=shape.width)
 
-            elif s.kind == "polygon":
-                self.canvas.create_polygon(s.points, fill=s.fill, outline=s.outline)
+            elif shape.kind == "polygon":
+                self.canvas.create_polygon(shape.points, fill=shape.fill, outline=shape.outline)
 
-            elif s.kind == "text":
-                # Nomes de âncora do Tkinter: "w" = esquerda, "center" = meio, "e" = direita
-                anchors = {"start": "w", "middle": "center", "end": "e"}
+            elif shape.kind == "text":
                 # Tamanho negativo na fonte = tamanho em pixels (igual ao do SVG)
-                self.canvas.create_text(s.x1, s.y1, text=s.text, fill=s.fill,
-                                        anchor=anchors[s.anchor], font=("Helvetica", -s.size),
-                                        tags=tags_for(s))
+                self.canvas.create_text(shape.x1, shape.y1, text=shape.text, fill=shape.fill,
+                                        anchor=CANVAS_ANCHORS[shape.anchor], font=("Helvetica", -shape.size),
+                                        tags=tags_for(shape))
 
         self.canvas.configure(scrollregion=(0, 0, self.chart_width, self.chart_height))
         # Todo item marcado com a etiqueta "task" responde ao clique do mouse
@@ -495,7 +470,6 @@ class SimulatorWindow:
 
     # ---------- Seleção de tarefa ----------
 
-    # Descobre qual tarefa foi clicada olhando as etiquetas (task1, task2, ...) do item
     def on_task_click(self, event):
         items = self.canvas.find_withtag("current")
         if len(items) == 0:
@@ -505,7 +479,6 @@ class SimulatorWindow:
                 self.select_task(int(tag[4:]))
                 return
 
-    # Preenche (ou limpa) os campos de edição e liga/desliga os botões conforme a tarefa seja editável.
     def fill_task_form(self, info, state_name):
         editable = info is not None and state_name != 'Removida'
         for key, entry in self.entries.items():
@@ -519,7 +492,6 @@ class SimulatorWindow:
         self.apply_task_button.configure(state="normal" if editable else "disabled")
         self.remove_task_button.configure(state="normal" if editable else "disabled")
 
-    # Mostra no menu lateral a situação da tarefa selecionada.
     def show_task_status(self, task_id, info, state_name):
         self.panel_title.configure(text=f"Tarefa {task_id}")
         hint = f"Instância {info.instance_number} | instante {self.result.total_ticks}"
@@ -534,12 +506,10 @@ class SimulatorWindow:
             lines += f"{name}: {value}\n"
         self.set_status_text(lines.strip())
 
-    # Seleciona uma tarefa (0 = nenhuma): destaca a linha e preenche o menu lateral
     def select_task(self, task_id):
         self.selected_task_id = task_id
         self.task_state_dirty = False
 
-        # volta todos os fundos para branco e pinta o da tarefa escolhida
         self.canvas.itemconfigure("rowbg", fill="#ffffff", outline="#ffffff")
         if task_id > 0:
             self.canvas.itemconfigure(f"rowbg{task_id}", fill="#fff3c4", outline="#e0a800")
@@ -558,21 +528,12 @@ class SimulatorWindow:
             return
         self.show_task_status(task_id, info, state_name)
 
-    # Atualiza o texto de consulta sem permitir edição acidental do diagnóstico.
     def set_status_text(self, message):
-        self.status_text.configure(state="normal")
-        self.status_text.delete("1.0", "end")
-        self.status_text.insert("1.0", message)
-        self.status_text.configure(state="disabled")
+        set_readonly_text(self.status_text, message)
 
-    # Atualiza relatório/log mantendo a área somente para leitura.
     def show_message(self, message):
-        self.text.configure(state="normal")
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", message)
-        self.text.configure(state="disabled")
+        set_readonly_text(self.text, message)
 
-    # Entrega o controle de eventos à janela principal do Tkinter.
     def run(self):
         self.root.mainloop()
 
@@ -588,16 +549,20 @@ def tags_for(shape):
     return tags
 
 
-# Devolve só as últimas linhas (não vazias) de um texto
+def set_readonly_text(widget, message):
+    # Text desabilitado não aceita inserções nem pelo programa; liberar apenas
+    # durante a atualização mantém os painéis de consulta protegidos da digitação.
+    widget.configure(state="normal")
+    widget.delete("1.0", "end")
+    widget.insert("1.0", message)
+    widget.configure(state="disabled")
+
+
 def last_lines(text, count):
-    lines = []
-    for line in text.split("\n"):
-        if line.strip():
-            lines.append(line)
+    lines = [line for line in text.split("\n") if line.strip()]
     return "\n".join(lines[-count:])
 
 
-# Liga os callbacks do programa à janela e inicia sua interação.
 def run_gui(engine, config_path, output_dir):
     window = SimulatorWindow(engine, config_path, output_dir)
     window.run()

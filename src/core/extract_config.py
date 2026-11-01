@@ -4,27 +4,24 @@ import TCB
 from task_validation import task_is_valid
 from choose_task import normalize_algorithm
 
-# Valores padrão usados quando a primeira linha do arquivo não informa o parâmetro
+# Campos vazios do sistema usam os valores sugeridos pelo requisito 3.2.
 DEFAULT_ALGORITHM = 'RM'
 DEFAULT_QUANTUM = 1
 DEFAULT_NUM_CPUS = 1
 
-# Erro no arquivo de configuração. A mensagem diz o motivo do problema.
-# (Levantar um erro é parecido com imprimir a mensagem e chamar exit() em C,
-# mas quem chamou decide o que fazer: o terminal imprime, a janela mostra um aviso.)
 class ConfigError(ValueError):
-    pass
+    """Entrada inválida; o chamador decide se exibe o erro no console ou na janela."""
 
 
-# Lê o arquivo e devolve as linhas que não estão em branco.
 def get_valid_lines(file_path):
     if not os.path.exists(file_path):
         raise ConfigError(f"Error: The file '{file_path}' was not found.")
     try:
+        # utf-8-sig aceita arquivos com ou sem o BOM comum em editores do Windows.
         with open(file_path, 'r', encoding='utf-8-sig') as file:
             lines = file.readlines()
-    except Exception as e:
-        raise ConfigError(f"Error reading the file: {e}")
+    except (OSError, UnicodeError) as error:
+        raise ConfigError(f"Error reading the file: {error}") from error
 
     valid_lines = [line.strip() for line in lines if line.strip()]
     if len(valid_lines) < 2:
@@ -32,16 +29,25 @@ def get_valid_lines(file_path):
     return valid_lines
 
 
-# Lê algoritmo, quantum e CPUs da primeira linha, aplicando os valores padrão
-# aos que faltam. Avisos são acrescentados ao log. Devolve (algoritmo, quantum, num_cpus).
-def extract_system_parameters(file_path, log):
+def extract_configuration(file_path, log):
+    """Lê o arquivo uma vez, para que sistema e tarefas usem a mesma configuração."""
     valid_lines = get_valid_lines(file_path)
+    parameters = _extract_system_parameters(valid_lines, log)
+    tasks = _extract_task_list(valid_lines, log)
+    return (*parameters, tasks)
 
+
+# As extrações parciais preservam os pontos de entrada anteriores. O simulador
+# usa extract_configuration para evitar duas leituras do mesmo arquivo.
+def extract_system_parameters(file_path, log):
+    return _extract_system_parameters(get_valid_lines(file_path), log)
+
+
+def _extract_system_parameters(valid_lines, log):
     system_line = valid_lines[0].rstrip(';').split(';')
     if len(system_line) > 3:
         raise ConfigError("Error: The first line is poorly formatted.")
 
-    # Parâmetros que faltam na primeira linha recebem o valor padrão (item 3.2 do PDF)
     while len(system_line) < 3:
         system_line.append("")
 
@@ -81,18 +87,18 @@ def extract_system_parameters(file_path, log):
     return algorithm, quantum, num_cpus
 
 
-# Lê as tarefas (da segunda linha em diante). Aperiódicas são ignoradas com um aviso.
-# Devolve a lista de TCBs; avisos e erros de linha vão para o log.
 def extract_task_list(file_path, log):
-    valid_lines = get_valid_lines(file_path)
+    return _extract_task_list(get_valid_lines(file_path), log)
 
+
+def _extract_task_list(valid_lines, log):
     task_list = []
     seen_ids = set()
     seen_colors = set()
 
     log.append("=== TASK LIST ===")
-    for i in range(1, len(valid_lines)):
-        task_line = valid_lines[i].rstrip(';').split(';')
+    for i, line in enumerate(valid_lines[1:], start=1):
+        task_line = line.rstrip(';').split(';')
         if not task_is_valid(task_line, i, log, seen_ids, seen_colors):
             raise ConfigError(f"Error: Invalid parameters in line {i+1}.")
 
@@ -104,8 +110,7 @@ def extract_task_list(file_path, log):
         task_list.append(task)
         log.append(str(task))
 
-    # Sem tarefas periódicas não há o que simular (as aperiódicas foram ignoradas)
-    if len(task_list) == 0:
+    if not task_list:
         raise ConfigError("Error: No periodic tasks to simulate. Aperiodic tasks (period=0) are not supported yet.")
 
     return task_list

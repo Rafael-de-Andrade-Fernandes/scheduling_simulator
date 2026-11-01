@@ -1,22 +1,19 @@
 """Relógio em ticks, liberações periódicas e aplicação de decisões por eventos."""
-from utils import initialize_processors, pair_cpus_tasks
-from extract_config import extract_system_parameters, extract_task_list
-from choose_task import choose_task, draws, get_algorithm, normalize_algorithm
 from copy import deepcopy
 import random
 
 from TCB import NEW, READY, RUNNING, SUSPENDED, FINISHED
+from choose_task import choose_task, draws, get_algorithm, normalize_algorithm
+from extract_config import extract_configuration
 from simulation_state import simulation_state
 from state_editor import edit_state
 from task_fields import positive_integer, validate_changes
 from simulation_result import Event, TaskInfo, SimulationResult, SIMULATION_LIMIT
+from utils import initialize_processors, pair_cpus_tasks
 
 
-# Lê o arquivo de configuração e confere se o sistema é válido.
-# Avisos e notas vão para o log (lista de textos). Em caso de erro, levanta ValueError.
 def load_system(file_path, log):
-    algorithm, quantum, num_cpus = extract_system_parameters(file_path, log)
-    task_list = extract_task_list(file_path, log)
+    algorithm, quantum, num_cpus, task_list = extract_configuration(file_path, log)
 
     log.append(f"algorithm {algorithm}")
     log.append(f"quantum {quantum}")
@@ -25,16 +22,16 @@ def load_system(file_path, log):
     return algorithm, quantum, num_cpus, task_list
 
 
-# Confere uma tarefa antes de iniciar a simulação (a lista recebida não é alterada).
 def check_task(task, seen_ids, seen_colors):
     if task.id in seen_ids or task.color in seen_colors:
         raise ValueError('Identificadores e cores precisam ser exclusivos por tarefa.')
-    if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0 or task.id <= 0:
+    # Os tempos já passaram por validate_changes; o ID fixo é validado aqui.
+    if task.id <= 0:
         raise ValueError('A definição periódica contém um tempo ou identificador inválido.')
 
 
-# Cria o estado do tick 0, com cópias das tarefas e uma CPU por identificador.
 def start_simulation(algorithm, num_cpus, task_list):
+    """Cria o instante zero sem reutilizar TCBs que possam pertencer a outra simulação."""
     algorithm = normalize_algorithm(algorithm)
     num_cpus = positive_integer(num_cpus, 'Número de processadores')
     tasks = deepcopy(task_list)
@@ -42,7 +39,6 @@ def start_simulation(algorithm, num_cpus, task_list):
     seen_ids = set()
     seen_colors = set()
     for task in tasks:
-        # validate_changes normaliza os campos (ex.: cor em maiúsculas)
         for field, value in validate_changes(task, {}).items():
             setattr(task, field, value)
         check_task(task, seen_ids, seen_colors)
@@ -59,14 +55,12 @@ def start_simulation(algorithm, num_cpus, task_list):
     return initial_state
 
 
-# ---------- Etapas de um tick ----------
-
-# Passo 1: tarefas Novas cuja chegada já aconteceu passam para Pronta (ou Suspensa)
-# e já agendam a próxima instância.
 def release_arrivals(state):
+    # Uma redução de período pode deixar várias liberações vencidas. O laço
+    # também admite as sucessoras geradas agora que já deveriam ter chegado.
     while True:
         arrived = [task for task in state.tasks_in(NEW) if task.arrival <= state.tick]
-        if len(arrived) == 0:
+        if not arrived:
             break
         for task in arrived:
             if task.starts_suspended:
@@ -79,34 +73,34 @@ def release_arrivals(state):
             state.log.append(f"Task {task.id}({task.instance_number}) has arrived at tick {state.tick}.")
 
 
-# Passo 2: marca (uma única vez) as instâncias que passaram do prazo.
-# Estar atrasada é um evento: a tarefa continua na fila e pode terminar depois.
 def check_deadlines(state):
+    # Atraso é registrado uma única vez e não encerra nem bloqueia a instância.
     active_tasks = state.tasks_in(READY) + state.tasks_in(RUNNING) + state.tasks_in(SUSPENDED)
     for task in active_tasks:
         if task.absolute_deadline <= state.tick and not task.is_late:
-            state.log.append(f"SCHEADULING ERROR: Task {task.id}({task.instance_number}) has not completed its execution within its deadline at tick {state.tick}.")
+            state.log.append(
+                f"SCHEADULING ERROR: Task {task.id}({task.instance_number}) "
+                f"has not completed its execution within its deadline at tick {state.tick}.")
             state.result.events.append(Event("deadline_miss", state.tick, task.id, task.instance_number))
             task.is_late = True
 
 
-# Passo 3: só chama o algoritmo quando houve um evento que pode mudar a decisão
-# (chegada, CPU liberada, edição). Passar o relógio, sozinho, não reescalona.
 def schedule_if_needed(state):
+    # RM/EDF não registram tick_event: só chegadas, liberações de CPU e edições
+    # relevantes pedem uma nova seleção. Um prazo vencido sozinho não pede.
     policy = get_algorithm(state.algorithm)
     if policy.tick_event is not None and policy.tick_event(state):
         state.reschedule_needed = True
     if state.reschedule_needed:
         state.reschedule_needed = False
-        if len(state.tasks_in(READY)) > 0:
+        if state.tasks_in(READY):
             schedule(state)
 
 
-# Escolhe as instâncias que devem executar (uma por CPU, no máximo) e aplica as trocas.
 def schedule(state):
     state.log.append(f"A specific event triggered the scheduler in tick {state.tick}.")
     previously_running = tuple(state.tasks_in(RUNNING))
-    candidates = state.tasks_in(READY) + state.tasks_in(RUNNING)
+    candidates = state.tasks_in(READY) + list(previously_running)
 
     # O gerador de números aleatórios faz parte do estado: voltar e avançar
     # de novo repete exatamente os mesmos sorteios.
@@ -116,7 +110,7 @@ def schedule(state):
 
     selected = []
     vacancies = min(len(state.processors_list), len(candidates))
-    for i in range(vacancies):
+    for _ in range(vacancies):
         chosen = choose_task(candidates, state.algorithm, rng, state)
         candidates.remove(chosen)
         selected.append(chosen)
@@ -130,26 +124,29 @@ def schedule(state):
     apply_selection(state, selected, previously_running)
 
 
-# Registra o evento "sorteio" quando o sorteio colocou uma tarefa nova para executar.
 def record_draws(state, selected, previously_running):
+    # Comparações intermediárias podem sortear tarefas que não ganham uma CPU.
+    # O gráfico mostra apenas sorteios que efetivamente causaram um despacho.
+    selected = set(selected)
     for winner, loser in draws:
         if winner in selected and loser not in selected and winner not in previously_running:
             state.result.events.append(Event("draw", state.tick, winner.id, winner.instance_number))
 
 
-# Tira da CPU quem perdeu a vaga, coloca para executar quem ganhou e liga tarefas às CPUs.
 def apply_selection(state, selected, previously_running):
+    selected_set = set(selected)
+    running_set = set(previously_running)
     for task in previously_running:
-        if task not in selected:
+        if task not in selected_set:
             state.change_state(task, READY)
     for task in selected:
-        if task not in previously_running:
+        if task not in running_set:
             state.change_state(task, RUNNING)
     pair_cpus_tasks(state.tasks_in(RUNNING), state.processors_list)
 
 
-# Passo 4: cada CPU executa 1 tick. Devolve o que cada CPU fez (None = CPU parada).
 def execute_tick(state):
+    """Executa [tick, tick+1) e registra a ocupação, mesmo se a instância terminar."""
     tick_row = []
     for cpu in state.processors_list:
         if cpu.task_running is None:
@@ -167,18 +164,21 @@ def execute_tick(state):
     return tick_row
 
 
-# Termina uma instância: o estado vira FINISHED e a CPU é liberada.
 def finish_task(state, task):
+    # O término pertence ao limite direito do intervalo. A vaga é aproveitada
+    # pelo próximo despacho, antes de executar o intervalo que começa ali.
     state.result.events.append(Event("finish", state.tick + 1, task.id, task.instance_number))
     state.change_state(task, FINISHED)
-    if len(state.tasks_in(READY)) > 0:
+    if state.tasks_in(READY):
         state.reschedule_needed = True
     if task.instance_number == SIMULATION_LIMIT:
-        state.log.append(f"Task {task.id}({task.instance_number}) has executed {SIMULATION_LIMIT} times and has reached the simulation limit at tick {state.tick} -> {state.tick + 1}.")
+        state.log.append(
+            f"Task {task.id}({task.instance_number}) has executed {SIMULATION_LIMIT} times "
+            f"and has reached the simulation limit at tick {state.tick} -> {state.tick + 1}.")
 
 
-# Constrói o próximo estado (tick + 1) sem modificar o estado recebido nem o histórico.
 def scale(current_state):
+    """Constrói o próximo retrato, processando eventos antes de consumir CPU."""
     if current_state.is_finished:
         return current_state
 
@@ -194,43 +194,35 @@ def scale(current_state):
     schedule_if_needed(state)
     tick_row = execute_tick(state)
 
-    # Registra o que aconteceu neste tick para o gráfico de Gantt
     result.timeline.append(tick_row)
     result.suspended_timeline.append([(task.id, task.instance_number)
                                       for task in state.tasks_in(SUSPENDED)])
-    state.tick = state.tick + 1
+    state.tick += 1
     result.total_ticks = state.tick
     state.refresh_result()
     return state
 
 
-# Guarda o histórico da simulação e é a única interface usada pela janela e pelo console.
-#
-#   history[t] é o estado no tick t; o último é o estado atual
-#   (parecido com um vetor de structs em C, uma cópia por tick).
-#
-# Avançar calcula um novo estado e o acrescenta ao fim; voltar descarta o último.
-# Voltar e avançar de novo dá o mesmo resultado, porque o estado guarda também o gerador
-# de números aleatórios (os sorteios de desempate se repetem).
 class Simulator:
+    """Ponto de acesso da GUI e do console ao histórico.
+
+    history[t] guarda o retrato do tick t. Voltar descarta o último retrato;
+    avançar recalcula o futuro, incluindo os mesmos sorteios guardados no estado.
+    """
     def __init__(self):
         self.history = []
 
-    # Esquece a simulação carregada.
     def reset(self):
         self.history = []
 
-    # Diz se já existe uma configuração carregada.
     def is_loaded(self):
-        return len(self.history) > 0
+        return bool(self.history)
 
-    # Estado atual (o último do histórico).
     def current(self):
         return self.history[-1]
 
-    # Lê o arquivo de configuração e cria o estado do tick 0.
-    # Em caso de erro, levanta ValueError com o log e o motivo do erro.
     def load(self, file_path):
+        """Substitui a simulação; falhas deixam o histórico vazio e preservam o diagnóstico."""
         log = []
         try:
             algorithm, quantum, num_cpus, task_list = load_system(file_path, log)
@@ -241,31 +233,27 @@ class Simulator:
         state.log = log
         self.history = [state]
 
-    # Simula mais um tick (não faz nada se a simulação já terminou). Devolve o novo estado atual.
     def step_forward(self):
         if not self.current().is_finished:
             self.history.append(scale(self.current()))
         return self.current()
 
-    # Diz se existe um tick anterior para onde voltar.
     def can_step_back(self):
         return len(self.history) > 1
 
-    # Descarta o último tick e devolve o estado anterior, sem recalculá-lo.
     def step_back(self):
         if self.can_step_back():
             self.history.pop()
         return self.current()
 
-    # Avança até a simulação terminar (ou parar numa suspensão manual que só o usuário retoma).
     def run_to_end(self):
+        """Para também quando só resta suspensão manual, que não pode se resolver sozinha."""
         while not self.current().is_finished and not self.current().is_blocked:
             self.step_forward()
         return self.current()
 
-    # Aplica uma edição (ver state_editor.edit_state) ao estado atual.
-    # Se for inválida, levanta ValueError e nada muda. Editar não cria um tick novo.
     def edit(self, **changes):
+        # Só substitui o retrato depois da transação validada; editar não cria tick.
         edited = edit_state(self.current(), **changes)
         self.history[-1] = edited
         return edited
