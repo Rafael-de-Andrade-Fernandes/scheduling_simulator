@@ -269,9 +269,9 @@ class SimulatorWindow:
         self.after_id = None
         if not self.is_running:
             return
-        self.advance(render=False)
+        self.advance()
         if self.is_running:
-            self.after_id = self.root.after(1, self.run_next_step)
+            self.after_id = self.root.after(300, self.run_next_step)
 
     # Compartilha a transição entre os modos manual e completo, tratando término/bloqueio.
     def advance(self, render=True):

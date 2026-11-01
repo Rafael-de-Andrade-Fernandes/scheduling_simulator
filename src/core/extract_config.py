@@ -104,8 +104,9 @@ def extract_task_list(file_path, log):
         task_list.append(task)
         log.append(str(task))
 
-    # Sem tarefas periódicas não há o que simular (as aperiódicas foram ignoradas)
+    # Se todas as tarefas eram aperiódicas, a simulação começa vazia (já terminada).
+    # Os avisos acima já informaram ao usuário quais linhas foram ignoradas.
     if len(task_list) == 0:
-        raise ConfigError("Error: No periodic tasks to simulate. Aperiodic tasks (period=0) are not supported yet.")
+        log.append("Warning: No periodic tasks to simulate. All tasks were ignored.")
 
     return task_list
