@@ -5,19 +5,16 @@ from TCB import NEW, READY, RUNNING, SUSPENDED, FINISHED, REMOVED
 from simulation_result import SIMULATION_LIMIT
 from choose_task import available_algorithms
 
-# Estados de uma instância que ainda não terminou nem foi removida, na ordem de consulta
 ACTIVE_STATES = (NEW, READY, RUNNING, SUSPENDED)
 
 
-# Um retrato completo da simulação em um instante de tempo (uma "struct" copiada a cada tick).
-#
-# Todas as instâncias de tarefas ficam em UMA lista (all_tasks). Cada instância tem um
-# campo "state" (NEW, READY, RUNNING...). As "filas" não existem como listas:
-# tasks_in(READY) devolve as instâncias que estão naquele estado, na ordem em que entraram.
-# Toda mudança de estado passa por change_state().
-#
-# As edições feitas pelo usuário estão em state_editor.py.
 class simulation_state:
+    """Retrato completo de um instante, copiado pelo simulador antes de avançar.
+
+    all_tasks é a fonte única dos TCBs. As filas são consultas por estado e
+    state_order, sem listas paralelas para sincronizar. Mudanças passam por
+    change_state para manter essa ordem e os vínculos com as CPUs coerentes.
+    """
     def __init__(self, algorithm, processors_list, tasks, result):
         self.tick = 0
         self.algorithm = algorithm
@@ -27,14 +24,13 @@ class simulation_state:
         for task in tasks:
             self.append_task(task)
         self.result = result
-        # Mensagens da simulação, uma por linha (cada estado guarda as suas, para o "voltar" funcionar)
+        # O log pertence ao retrato: voltar descarta também as mensagens do futuro.
         self.log = []
         self.random_state = random.getstate()
         # Eventos no limite de um tick são consumidos no próximo despacho,
         # antes de executar o intervalo que começa nesse mesmo instante.
         self.reschedule_needed = False
 
-    # Acrescenta uma instância nova (estado NEW) à lista de tarefas.
     def append_task(self, task):
         task.state = NEW
         task.state_order = self.next_order
@@ -56,40 +52,35 @@ class simulation_state:
                     instances.append(task)
         return instances
 
-    # Muda o estado de uma instância. É o único lugar que faz isso.
-    # Ao sair de uma CPU (qualquer mudança de estado), libera a CPU que ela ocupava.
     def change_state(self, task, new_state):
+        """Libera a CPU anterior e posiciona a instância no fim da nova fila."""
         self.release_cpu(task)
         task.state = new_state
         task.state_order = self.next_order
         self.next_order += 1
 
-    # Desliga a ligação entre a instância e a CPU em que estava.
     def release_cpu(self, task):
         if task.processor is not None:
             task.processor.task_running = None
             task.processor = None
 
-    # Descarta uma instância futura cancelada: ela some do sistema sem deixar registro.
     def discard(self, task):
+        # Uma liberação cancelada antes do ingresso não deve gerar chegada ou término.
         self.release_cpu(task)
         self.all_tasks.remove(task)
 
-    # Dados de apresentação (cor, prazos...) da tarefa com esse ID.
     def info_of(self, task_id):
         return next(info for info in self.result.tasks if info.id == task_id)
 
-    # Diz se a tarefa com esse ID já foi removida pelo usuário.
     def is_removed(self, task_id):
         for info in self.result.tasks:
             if info.id == task_id:
                 return info.removed_tick is not None
         return False
 
-    # Escolhe a instância ativa mais antiga ou a última concluída para inspeção.
-    # Devolve (instância, nome do estado).
     def current_task(self, task_id):
-        # O número da instância mantém a ordem de criação mesmo após editar o ingresso.
+        """Consulta a mais antiga ainda ativa ou a última concluída da definição."""
+        # Antiguidade usa instance_number; state_order muda nas trocas de fila.
         if self.is_removed(task_id):
             cancelled = [task for task in self.all_tasks if task.id == task_id and task.state == REMOVED]
             if cancelled:
@@ -106,20 +97,19 @@ class simulation_state:
             return max(completed, key=lambda task: task.instance_number), FINISHED
         raise ValueError(f"A tarefa {task_id} não existe no estado atual.")
 
-    # Indica ausência de trabalho ativo ou futuro; suspensão não é conclusão.
     @property
     def is_finished(self):
         return not any(task.state in ACTIVE_STATES for task in self.all_tasks)
 
-    # Detecta espera exclusiva por retomada manual, sem liberação futura pendente.
     @property
     def is_blocked(self):
-        has_suspended = len(self.tasks_in(SUSPENDED)) > 0
+        # Mesmo suspensa, a família pode ter liberações futuras a processar.
+        has_suspended = any(task.state == SUSPENDED for task in self.all_tasks)
         has_other_work = any(task.state in (NEW, READY, RUNNING) for task in self.all_tasks)
         return has_suspended and not has_other_work
 
-    # Agenda a próxima liberação por período, sem duplicar ou ultrapassar dez instâncias.
     def enqueue_next_instance(self, task):
+        """Agenda a sucessora pela data periódica, independentemente do término atual."""
         if task.instance_number >= SIMULATION_LIMIT or self.is_removed(task.id):
             return None
         next_number = task.instance_number + 1
@@ -131,14 +121,12 @@ class simulation_state:
         self.append_task(next_instance)
         return next_instance
 
-    # Atualiza somente os metadados correntes usados pelo desenho.
     def refresh_result(self):
         self.result.algorithm = self.algorithm
         self.result.num_cpus = len(self.processors_list)
         self.result.current_suspended = [(task.id, task.instance_number)
                                          for task in self.tasks_in(SUSPENDED)]
 
-    # Consulta o registro compartilhado, sem nomes concretos fixos na interface.
     @property
     def algorithm_options(self):
         return available_algorithms()

@@ -3,8 +3,8 @@
 SIMULATION_LIMIT = 10
 
 
-# Evento de uma instância; o tick é o instante exato, não o índice do desenho.
 class Event:
+    """Ocorrência em um instante; instance=0 representa a definição, como na remoção."""
     def __init__(self, kind, tick, task_id, instance):
         self.kind = kind
         self.tick = tick
@@ -12,8 +12,8 @@ class Event:
         self.instance = instance
 
 
-# Metadados para apresentação, preservados mesmo após remover a tarefa.
 class TaskInfo:
+    """Descrição da tarefa para o gráfico, inclusive depois da sua remoção."""
     def __init__(self, task):
         self.id = task.id
         self.color = task.color
@@ -25,15 +25,15 @@ class TaskInfo:
         self.removed_tick = None
 
 
-# Reconfiguração feita no instante atual, identificada no gráfico por S#.
 class SystemEvent:
+    """Intervenção do usuário exibida como S# no gráfico."""
     def __init__(self, tick, description):
         self.tick = tick
         self.description = description
 
 
-# Os dados de cada intervalo são preservados mesmo após uma edição do sistema.
 class SimulationResult:
+    """Dados de saída consultados pelo Gantt, pelo resumo e pela exportação."""
     def __init__(self, algorithm, num_cpus, tasks):
         self.algorithm = algorithm
         self.initial_algorithm = algorithm
@@ -41,14 +41,15 @@ class SimulationResult:
         self.num_cpus = num_cpus
         self.tasks = tasks
         self.total_ticks = 0
-        # Cada linha contém somente as CPUs que existiam naquele tick.
+        # timeline[t][cpu] é (id, instância) ou None para CPU desligada.
+        # Uma CPU ausente da linha ainda não existia (ou já foi removida).
         self.timeline = []
         self.events = []
         self.suspended_timeline = []
         self.current_suspended = []
         self.system_events = []
 
-    # Mantém visíveis CPUs históricas mesmo depois de reduzir o sistema atual.
     @property
     def max_cpus(self):
+        # Não esconder linhas de CPUs usadas antes de uma redução de quantidade.
         return max([self.num_cpus] + [len(row) for row in self.timeline])

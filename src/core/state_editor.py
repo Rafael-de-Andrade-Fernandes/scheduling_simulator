@@ -12,18 +12,14 @@ from task_fields import TASK_FIELDS, positive_integer, validate_changes
 TASK_STATES = (NEW, READY, RUNNING, SUSPENDED, FINISHED)
 
 
-# Aplica uma edição numa cópia do estado e devolve a cópia.
-# Se qualquer parte for inválida, levanta ValueError e o estado original fica intacto
-# (a edição é "tudo ou nada"). Os parâmetros são opcionais: só os informados são aplicados.
-#   algorithm       nome do algoritmo ("RM" ou "EDF")
-#   num_cpus        nova quantidade de CPUs
-#   task_id         tarefa a editar, junto com:
-#       changes     dicionário campo -> valor (ver TASK_FIELDS)
-#       task_state  novo estado da tarefa (um de TASK_STATES)
-#   add_task        dicionário com os campos de uma nova tarefa (inclui o "id")
-#   remove_task_id  ID da tarefa a remover
 def edit_state(state, algorithm=None, num_cpus=None, task_id=None, changes=None, task_state=None,
                add_task=None, remove_task_id=None):
+    """Aplica as operações informadas numa cópia; qualquer erro descarta a transação.
+
+    changes contém atributos de TASK_FIELDS para a família selecionada por task_id.
+    A cópia inclui também o resultado e as CPUs, evitando mudanças parciais no
+    histórico se uma validação falhar depois de outra operação já ter sido aplicada.
+    """
     edited = deepcopy(state)
     descriptions = []
     if algorithm is not None:
@@ -53,7 +49,6 @@ def edit_state(state, algorithm=None, num_cpus=None, task_id=None, changes=None,
 
 # ---------- Sistema: algoritmo e CPUs ----------
 
-# Troca o algoritmo a partir do instante atual.
 def set_algorithm(state, name):
     value = normalize_algorithm(name)
     if value != state.algorithm:
@@ -61,9 +56,9 @@ def set_algorithm(state, name):
     state.algorithm = value
 
 
-# Muda a quantidade de CPUs. Tarefas que estavam em CPUs removidas voltam para a fila de prontos.
-# Devolve a nova quantidade.
 def set_num_cpus(state, value):
+    # As tarefas de CPUs removidas voltam a disputar a fila global; seu progresso
+    # não é reiniciado. As CPUs mantidas conservam os mesmos identificadores.
     count = positive_integer(value, "Número de processadores")
     if count != len(state.processors_list):
         state.result.system_events.append(SystemEvent(
@@ -79,10 +74,10 @@ def set_num_cpus(state, value):
     return count
 
 
-# Diz se a edição pode mudar quem deve executar (e portanto exige chamar o algoritmo).
-# Sem tarefas prontas não há alternativa a despachar nem a preemptar.
 def edit_requires_rescheduling(before, after):
-    if len(after.tasks_in(READY)) == 0:
+    """Distingue mudanças de prioridade/despacho de alterações apenas de apresentação."""
+    # Sem candidatas prontas não há alternativa a despachar nem a preemptar.
+    if not after.tasks_in(READY):
         return False
     if before.algorithm != after.algorithm:
         return True
@@ -101,12 +96,10 @@ def edit_requires_rescheduling(before, after):
     return False
 
 
-# Conjunto de (tarefa, instância) que estão executando.
 def running_instances(state):
     return {(task.id, task.instance_number) for task in state.tasks_in(RUNNING)}
 
 
-# Resume a prioridade de cada instância candidata segundo o algoritmo do estado.
 def priorities(state):
     values = {}
     policy = get_algorithm(state.algorithm)
@@ -117,7 +110,6 @@ def priorities(state):
 
 # ---------- Tarefas: edição de características e de estado ----------
 
-# Traduz o nome do estado digitado (sem diferenciar maiúsculas) para um de TASK_STATES.
 def parse_task_state(task_state):
     if task_state is None:
         return None
@@ -128,8 +120,8 @@ def parse_task_state(task_state):
     raise ValueError("Estado inválido. Escolha Nova, Pronta, Executando, Suspensa ou Finalizada.")
 
 
-# Edita a família inteira (todas as instâncias ainda não concluídas) de uma tarefa.
 def edit_task(state, task_id, changes, task_state):
+    """Edita todas as instâncias ativas e a cópia que dará origem às futuras."""
     if state.is_removed(task_id):
         raise ValueError("A tarefa foi removida. Retroceda a simulação para restaurá-la.")
     task, source = state.current_task(task_id)
@@ -162,14 +154,12 @@ def edit_task(state, task_id, changes, task_state):
         set_family_state(state, siblings, target)
 
 
-# Impede duas tarefas com a mesma cor (cada tarefa precisa de uma cor diferente).
 def check_unique_color(state, color, task_id):
     for info in state.result.tasks:
         if info.id != task_id and info.color.upper() == color.upper():
             raise ValueError(f"A cor {color} já é usada por outra tarefa. Cada tarefa precisa de uma cor diferente.")
 
 
-# Diz se o estado pedido é diferente do estado atual de alguma instância da família.
 def family_state_differs(siblings, source, target):
     if target is None:
         return False
@@ -183,7 +173,6 @@ def family_state_differs(siblings, source, target):
     return False
 
 
-# Registra no gráfico (evento S#) o que mudou na tarefa.
 def log_task_changes(state, task_id, task, values, changed_fields, state_changed, target):
     names = dict(color='cor', arrival='ingresso', duration='duração', period='período', deadline='prazo')
     details = []
@@ -198,28 +187,30 @@ def log_task_changes(state, task_id, task, values, changed_fields, state_changed
     state.result.system_events.append(SystemEvent(state.tick, f"Tarefa {task_id}: {detail}"))
 
 
-# A nova duração precisa superar o que cada instância já executou
-# (pode ser igual somente se a instância está sendo finalizada).
 def check_duration(siblings, duration, target):
+    # Conferir apenas a instância de consulta apagaria trabalho de outra que já
+    # tenha executado mais. A igualdade vale para instâncias já finalizadas
+    # ou que estão sendo finalizadas explicitamente nesta edição.
     for other in siblings:
         finishing = target == FINISHED or other.state == FINISHED
         if duration < other.computational_time or (duration == other.computational_time and not finishing):
-            raise ValueError(f"A duração deve superar os {other.computational_time} ticks já executados pela instância {other.instance_number}, ou ser igual ao finalizar a instância.")
+            raise ValueError(
+                f"A duração deve superar os {other.computational_time} ticks já executados "
+                f"pela instância {other.instance_number}, ou ser igual ao finalizar a instância.")
 
 
-# Copia os novos valores para todas as instâncias da família e recalcula seus prazos.
-# Ingressos já ocorridos e o trabalho já executado não são reescritos.
 def apply_values(task, siblings, values, changed_fields, arrival_changed):
     for other in siblings:
         for key in ("color", "duration", "period", "deadline", "events"):
             setattr(other, key, deepcopy(values[key]))
         if other.state == NEW and (arrival_changed or 'period' in changed_fields):
-            other.arrival = values["arrival"] + (other.instance_number - task.instance_number) * values["period"]
-        other.end_period = other.arrival + other.period
-        other.absolute_deadline = other.arrival + other.deadline
+            # Só o calendário ainda não ocorrido pode ser recalculado; cada
+            # sucessora mantém sua distância em períodos da instância consultada.
+            periods_ahead = other.instance_number - task.instance_number
+            other.arrival = values["arrival"] + periods_ahead * values["period"]
+        other.update_deadlines()
 
 
-# Confere se a família pode ir para o estado pedido (Nova ou Executando têm condições).
 def check_target_state(state, siblings, target):
     if target == NEW:
         if any(task.computational_time for task in siblings):
@@ -234,12 +225,13 @@ def check_target_state(state, siblings, target):
         needed = sum(task.state != RUNNING for task in admitted)
         free = sum(cpu.task_running is None for cpu in state.processors_list)
         if needed > free:
-            raise ValueError(f"Processadores ocupados: são necessárias {needed} CPUs livres para executar todas as instâncias ativas, mas há {free}. Aumente a quantidade ou libere CPUs.")
+            raise ValueError(
+                f"Processadores ocupados: são necessárias {needed} CPUs livres para executar "
+                f"todas as instâncias ativas, mas há {free}. Aumente a quantidade ou libere CPUs.")
 
 
-# Muda todas as instâncias da família para o estado pedido.
-# Instâncias futuras continuam Novas (só herdam o estado quando chegarem).
 def set_family_state(state, siblings, target):
+    """Muda as ativas em conjunto; futuras só entram suspensas no instante de ingresso."""
     check_target_state(state, siblings, target)
 
     for task in siblings:
@@ -253,8 +245,8 @@ def set_family_state(state, siblings, target):
             continue
         move_task(state, task, target, future)
 
-    already_finished = any(task.id == siblings[0].id and task.state == FINISHED for task in state.all_tasks)
-    if target == FINISHED and not already_finished:
+    if target == FINISHED and not any(
+            task.id == siblings[0].id and task.state == FINISHED for task in state.all_tasks):
         # Uma definição cancelada antes do primeiro ingresso continua
         # consultável, sem registrar chegada/término que nunca aconteceram.
         representative = min(siblings, key=lambda task: task.instance_number)
@@ -263,15 +255,17 @@ def set_family_state(state, siblings, target):
         state.change_state(representative, FINISHED)
 
 
-# Move uma instância para o estado pedido, registrando os eventos do gráfico.
 def move_task(state, task, target, future):
+    # As condições para a família inteira já foram conferidas antes da primeira
+    # movimentação. Uma falha posterior ainda será descartada pela transação.
     if future:
         # Finalizar a família cancela as liberações que ainda não ocorreram.
         state.discard(task)
         return
 
     if target == NEW:
-        # Desfaz a chegada registrada neste mesmo instante
+        # Só é permitido desfazer admissões do instante atual; eventos anteriores
+        # pertencem ao histórico e não podem ser reescritos pela edição.
         state.result.events = [event for event in state.result.events
                                if not (event.kind == 'arrival' and event.tick == state.tick
                                        and event.task_id == task.id and event.instance == task.instance_number)]
@@ -290,7 +284,6 @@ def move_task(state, task, target, future):
         state.result.events.append(Event('finish', state.tick, task.id, task.instance_number))
 
 
-# Diz se a chegada desta instância já está registrada nos eventos.
 def arrival_recorded(state, task):
     for event in state.result.events:
         if event.kind == 'arrival' and event.task_id == task.id and event.instance == task.instance_number:
@@ -300,7 +293,6 @@ def arrival_recorded(state, task):
 
 # ---------- Tarefas: incluir e remover ----------
 
-# Inclui uma definição periódica no instante atual, sem reescrever o passado.
 def include_task(state, fields):
     task_id = positive_integer(fields.get('id', ''), 'Identificador')
     if any(key not in ('id',) + TASK_FIELDS for key in fields):
@@ -315,15 +307,18 @@ def include_task(state, fields):
         raise ValueError("O ingresso de uma nova tarefa não pode estar no passado.")
     check_unique_color(state, values['color'], task_id)
 
-    task = TCB([str(task_id)] + [str(values[key]) for key in TASK_FIELDS[:-1]] + [repr(values['events'])])
+    task = TCB([
+        str(task_id), values['color'], str(values['arrival']), str(values['duration']),
+        str(values['period']), str(values['deadline']), repr(values['events']),
+    ])
     state.append_task(task)
     state.result.tasks.append(TaskInfo(task))
     state.result.system_events.append(SystemEvent(state.tick, f"Tarefa {task_id} incluída; ingresso {task.arrival}"))
     return task
 
 
-# Cancela todas as instâncias restantes da definição, preservando as concluídas.
 def remove_task(state, task_id):
+    """Cancela a família sem apagar os TCBs e intervalos já registrados."""
     if state.is_removed(task_id) or not any(info.id == task_id for info in state.result.tasks):
         raise ValueError("Selecione uma tarefa existente que ainda não foi removida.")
     cancelled = state.active_instances(task_id)
