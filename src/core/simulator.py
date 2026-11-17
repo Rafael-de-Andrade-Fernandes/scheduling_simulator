@@ -29,7 +29,7 @@ def load_system(file_path, log):
 def check_task(task, seen_ids, seen_colors):
     if task.id in seen_ids or task.color in seen_colors:
         raise ValueError('Identificadores e cores precisam ser exclusivos por tarefa.')
-    if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0 or task.id <= 0:
+    if task.period <= 0 or task.deadline <= 0 or task.duration <= 0 or task.arrival < 0:
         raise ValueError('A definição periódica contém um tempo ou identificador inválido.')
 
 

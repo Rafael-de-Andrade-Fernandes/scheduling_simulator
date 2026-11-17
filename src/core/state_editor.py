@@ -6,7 +6,7 @@ from processor import processor
 from TCB import TCB, NEW, READY, RUNNING, SUSPENDED, FINISHED, REMOVED
 from simulation_result import Event, TaskInfo, SystemEvent
 from choose_task import get_algorithm, normalize_algorithm
-from task_fields import TASK_FIELDS, positive_integer, validate_changes
+from task_fields import TASK_FIELDS, positive_integer, validate_changes, normalize_task_id
 
 # Estados que o usuário pode escolher na interface (REMOVED só é alcançado removendo a tarefa)
 TASK_STATES = (NEW, READY, RUNNING, SUSPENDED, FINISHED)
@@ -304,7 +304,7 @@ def arrival_recorded(state, task):
 
 # Inclui uma definição periódica no instante atual, sem reescrever o passado.
 def include_task(state, fields):
-    task_id = positive_integer(fields.get('id', ''), 'Identificador')
+    task_id = normalize_task_id(fields.get('id', ''))
     if any(key not in ('id',) + TASK_FIELDS for key in fields):
         raise ValueError("A inclusão contém um campo de tarefa desconhecido.")
     if any(info.id == task_id for info in state.result.tasks):

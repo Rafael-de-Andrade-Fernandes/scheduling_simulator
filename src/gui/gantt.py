@@ -1,6 +1,7 @@
 """Primitivas do Gantt completo, com faixas para instâncias simultâneas."""
 # Gera o gráfico de Gantt como formas primitivas (independente de biblioteca).
 # Consome os dados de 'result' apenas em modo leitura.
+import re
 import textwrap
 
 # Layout (pixels)
@@ -29,6 +30,26 @@ COLOR_SUSPENDED = "#000000"
 COLOR_SYSTEM = "#7b1fa2"
 CPU_ABSENT = "absent"
 LANE_H = ROW_H
+
+
+# Nome mostrado no gráfico: ID só de números vira "T<número>" (ex.: 3 -> T3);
+# ID com letras (ex.: T1, BS01) é mostrado como foi escrito.
+def task_label(task_id):
+    if task_id.isdigit():
+        return "T" + task_id
+    return task_id
+
+
+# Chave de ordenação "natural" dos IDs: T2 vem antes de T10 (compara o número, não o texto).
+# Cada pedaço vira uma tupla: números (0, valor, "") e letras (1, 0, texto), que se comparam entre si.
+def id_sort_key(task_id):
+    key = []
+    for part in re.split(r"(\d+)", task_id):
+        if part.isdigit():
+            key.append((0, int(part), ""))
+        elif part != "":
+            key.append((1, 0, part))
+    return key
 
 
 # Linha de uma tarefa no gráfico. Se duas instâncias executam ao mesmo tempo, cada uma
@@ -94,7 +115,7 @@ def build_rows(result):
     spans = find_instance_spans(result)
     rows = {}
     offset = TOP
-    for task_id in sorted((info.id for info in result.tasks), reverse=True):
+    for task_id in sorted((info.id for info in result.tasks), key=id_sort_key, reverse=True):
         lanes, lane_count = assign_lanes(spans, task_id)
         height = ROW_H + max(0, lane_count - 1) * LANE_H
         rows[task_id] = TaskRow(offset, height, lanes)
@@ -124,13 +145,13 @@ class Shape:
         self.text = ""
         self.size = 11
         self.anchor = "start"
-        self.task_id = 0
+        self.task_id = ""   # "" = a forma não pertence a nenhuma tarefa
         self.is_background = False
         self.pattern = ""   # "dots" = pontos pretos sobre o fundo
 
 
 # Acrescenta uma área com cor/padrão e etiquetas de seleção da tarefa.
-def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id=0, is_background=False, pattern=""):
+def add_rect(shapes, x1, y1, x2, y2, fill, outline, task_id="", is_background=False, pattern=""):
     s = Shape("rect")
     s.x1, s.y1, s.x2, s.y2 = x1, y1, x2, y2
     s.fill = fill
@@ -160,7 +181,7 @@ def add_polygon(shapes, points, fill, outline):
 
 
 # Acrescenta texto com âncora e identificação opcional da tarefa.
-def add_text(shapes, x, y, text, size=11, anchor="start", color=COLOR_TEXT, task_id=0):
+def add_text(shapes, x, y, text, size=11, anchor="start", color=COLOR_TEXT, task_id=""):
     s = Shape("text")
     s.x1, s.y1 = x, y
     s.text = text
@@ -241,7 +262,7 @@ def build_task_rows(shapes, result, rows_by_id, color_by_id):
     for task_id in rows_by_id:
         row = rows_by_id[task_id]
         add_line(shapes, LEFT, row.top + row.height, tick_x(result.total_ticks), row.top + row.height, COLOR_GRID)
-        add_text(shapes, LEFT - 10, row.top + row.height / 2, f"T{task_id}", 13, "end", COLOR_TEXT, task_id)
+        add_text(shapes, LEFT - 10, row.top + row.height / 2, task_label(task_id), 13, "end", COLOR_TEXT, task_id)
 
     # Barras: para cada tick e cada CPU, pinta a célula da tarefa que executou
     for tick in range(result.total_ticks):
@@ -335,7 +356,7 @@ def build_cpu_rows(shapes, result, cpu_top, color_by_id):
                 task_id = current[0]
                 hex_color = color_by_id[task_id]
                 add_rect(shapes, x1, row_y + 3, x2, row_y + CPU_ROW_H - 3, to_css_color(hex_color), "#000000", task_id)
-                add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, f"T{current[0]}({current[1]})",
+                add_text(shapes, (x1 + x2) / 2, row_y + CPU_ROW_H / 2, f"{task_label(current[0])}({current[1]})",
                          10, "middle", text_color_for(hex_color), task_id)
             start = end
 

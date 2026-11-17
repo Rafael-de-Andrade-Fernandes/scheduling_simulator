@@ -1,6 +1,7 @@
 """Validação segura de campos do arquivo e unicidade das definições."""
 import ast
 import re
+from task_fields import normalize_task_id
 
 
 # Valida uma lista de textos por literal seguro, sem executar seus conteúdos.
@@ -43,7 +44,11 @@ def task_is_valid(task_line, i, log, seen_ids=None, seen_colors=None):
 
     # 2. Conversão e validação dos campos inteiros
     try:
-        t_id = int(t_id_str)
+        t_id = normalize_task_id(t_id_str)
+    except ValueError as error:
+        log.append(f"Warning: Line {line_idx} has an invalid task ID. {error}")
+        return False
+    try:
         t_arrival = int(t_arr_str)
         t_duration = int(t_dur_str)
         t_period = int(t_per_str)
@@ -54,9 +59,9 @@ def task_is_valid(task_line, i, log, seen_ids=None, seen_colors=None):
         return False
 
     # Regras de limite: id, duration e deadline > 0; arrival e period >= 0
-    if t_id <= 0 or t_duration <= 0 or t_deadline <= 0 or t_arrival < 0 or t_period < 0:
+    if t_duration <= 0 or t_deadline <= 0 or t_arrival < 0 or t_period < 0:
         log.append(f"Warning: Line {line_idx} has invalid numeric parameters. "
-                   "id, duration and deadline must be > 0; arrival and period must be >= 0.")
+                   "duration and deadline must be > 0; arrival and period must be >= 0.")
         return False
 
     # task_validation.py:58-61

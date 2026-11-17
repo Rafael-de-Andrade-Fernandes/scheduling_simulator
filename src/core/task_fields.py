@@ -7,6 +7,20 @@ import re
 TASK_FIELDS = ("color", "arrival", "duration", "period", "deadline", "events")
 
 
+# Confere e padroniza o identificador de uma tarefa: letras e números, sem espaços
+# (ex.: "T1", "t30" ou "7"). Maiúsculas e minúsculas valem o mesmo, então vira maiúsculo.
+# Identificador só de dígitos precisa ser maior que zero ("007" vira "7").
+def normalize_task_id(value):
+    text = str(value).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]+", text):
+        raise ValueError("Identificador inválido. Use letras e números, sem espaços (ex.: T1 ou 30).")
+    if text.isdigit():
+        if int(text) <= 0:
+            raise ValueError("Identificador numérico deve ser maior que zero.")
+        text = str(int(text))
+    return text
+
+
 # Converte um campo numérico e informa sua unidade/limite na mensagem de erro.
 def positive_integer(value, name, minimum=1):
     try:
@@ -18,7 +32,7 @@ def positive_integer(value, name, minimum=1):
     return number
 
 
-# Normaliza atributos de tarefas sem impor igualdade entre prazo e período.
+# Normaliza atributos de tarefas.
 # Devolve um dicionário com todos os campos de TASK_FIELDS: os valores de "changes"
 # onde existirem e os valores atuais da tarefa nos demais. Levanta ValueError se algo for inválido.
 def validate_changes(task, changes):

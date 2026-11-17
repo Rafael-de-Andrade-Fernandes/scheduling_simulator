@@ -25,9 +25,9 @@ class SimulatorWindow:
         self.shapes = []
         self.chart_width = 0
         self.chart_height = 0
-        # Resultado da última simulação e tarefa selecionada (0 = nenhuma)
+        # Resultado da última simulação e tarefa selecionada ("" = nenhuma)
         self.result = None
-        self.selected_task_id = 0
+        self.selected_task_id = ""
         self.task_state_dirty = False
         # O foco em um campo pausa a execução para não sobrescrever a digitação.
         self.entries = {}
@@ -327,7 +327,7 @@ class SimulatorWindow:
     def draw_state(self, state):
         # Ao voltar para um instante em que a tarefa selecionada ainda não existia, tira a seleção.
         if self.selected_task_id not in [info.id for info in state.result.tasks]:
-            self.selected_task_id = 0
+            self.selected_task_id = ""
         self.result = state.result
         self.shapes, self.chart_width, self.chart_height = build_gantt(self.result)
         self.draw_shapes()
@@ -378,7 +378,7 @@ class SimulatorWindow:
             if candidate not in used_colors:
                 color = candidate
                 break
-        return dict(id=max((info.id for info in state.result.tasks), default=0) + 1, color=color,
+        return dict(id=next_task_id([info.id for info in state.result.tasks]), color=color,
                     arrival=state.tick, duration=1, period=4, deadline=4, events="[]")
 
     # Formulário de inclusão: a nova tarefa passa a pertencer ao retrato atual.
@@ -406,7 +406,7 @@ class SimulatorWindow:
         # Inclui os campos validados e só fecha o diálogo se a edição for aceita.
         def add():
             if self.apply_edit(add_task={key: entry.get() for key, entry in fields.items()}):
-                self.select_task(int(fields['id'].get()))
+                self.select_task(self.result.tasks[-1].id)
                 dialog.destroy()
 
         tkinter.Button(dialog, text="Incluir tarefa", command=add).grid(row=len(labels), column=0, columnspan=2, pady=12)
@@ -501,8 +501,8 @@ class SimulatorWindow:
         if len(items) == 0:
             return
         for tag in self.canvas.gettags(items[0]):
-            if tag.startswith("task") and tag[4:].isdigit():
-                self.select_task(int(tag[4:]))
+            if tag.startswith("task") and len(tag) > 4:
+                self.select_task(tag[4:])
                 return
 
     # Preenche (ou limpa) os campos de edição e liga/desliga os botões conforme a tarefa seja editável.
@@ -534,14 +534,14 @@ class SimulatorWindow:
             lines += f"{name}: {value}\n"
         self.set_status_text(lines.strip())
 
-    # Seleciona uma tarefa (0 = nenhuma): destaca a linha e preenche o menu lateral
+    # Seleciona uma tarefa ("" = nenhuma): destaca a linha e preenche o menu lateral
     def select_task(self, task_id):
         self.selected_task_id = task_id
         self.task_state_dirty = False
 
         # volta todos os fundos para branco e pinta o da tarefa escolhida
         self.canvas.itemconfigure("rowbg", fill="#ffffff", outline="#ffffff")
-        if task_id > 0:
+        if task_id:
             self.canvas.itemconfigure(f"rowbg{task_id}", fill="#fff3c4", outline="#e0a800")
 
         info = None
@@ -551,7 +551,7 @@ class SimulatorWindow:
         self.fill_task_form(info, state_name)
 
         if info is None:
-            self.selected_task_id = 0
+            self.selected_task_id = ""
             self.panel_title.configure(text="Nenhuma tarefa selecionada")
             self.panel_hint.configure(text="Clique em uma tarefa no gráfico.")
             self.set_status_text("")
@@ -580,12 +580,28 @@ class SimulatorWindow:
 # Etiquetas do Canvas para uma forma: "task" + "task<id>" fazem o clique funcionar;
 # "rowbg" + "rowbg<id>" marcam o fundo da linha (usado para destacar a seleção).
 def tags_for(shape):
-    if shape.task_id == 0:
+    if shape.task_id == "":
         return ()
     tags = ("task", f"task{shape.task_id}")
     if shape.is_background:
         tags = tags + ("rowbg", f"rowbg{shape.task_id}")
     return tags
+
+
+# Sugere o ID da próxima tarefa: mantém o prefixo do ID de maior número e soma 1
+# (T1, T2 -> T3; 1, 2 -> 3). Sem tarefas, sugere 1.
+def next_task_id(ids):
+    best_number = 0
+    best_prefix = ""
+    for task_id in ids:
+        digits = len(task_id) - len(task_id.rstrip("0123456789"))
+        if digits == 0:
+            continue
+        number = int(task_id[len(task_id) - digits:])
+        if number >= best_number:
+            best_number = number
+            best_prefix = task_id[:len(task_id) - digits]
+    return best_prefix + str(best_number + 1)
 
 
 # Devolve só as últimas linhas (não vazias) de um texto

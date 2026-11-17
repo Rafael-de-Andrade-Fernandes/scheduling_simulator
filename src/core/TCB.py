@@ -1,5 +1,6 @@
 """Bloco de controle por instância, separado de processadores e renderização."""
 import ast
+from task_fields import normalize_task_id
 
 # Estados possíveis de uma instância (como um enum em C).
 # O nome em português é o mesmo que aparece na interface.
@@ -18,7 +19,7 @@ class TCB:
         fields = [field.strip() for field in task_line]
 
         # 2. Atribuição dos campos base (equivalente aos membros de uma struct em C)
-        self.id = int(fields[0])
+        self.id = normalize_task_id(fields[0])
         self.color = fields[1]
         self.arrival = int(fields[2])
         self.duration = int(fields[3])
